@@ -762,13 +762,18 @@ class AgentService {
   /// Communicates via stdin/stdout using the same JSON-RPC 2.0 protocol.
   Future<Map<String, dynamic>> connectToAcpCli(String command, {List<String> args = const []}) async {
     if (_acpClient != null) await _acpClient!.close();
+    _acpClient = null;
 
     final client = StdioAcpClient(command: command, arguments: args);
-    final info = await client.connect();
-    _acpClient = client;
-
-    _swapToAcp(client);
-    return info;
+    try {
+      final info = await client.connect();
+      _acpClient = client;
+      _swapToAcp(client);
+      return info;
+    } catch (e) {
+      await client.close();
+      rethrow;
+    }
   }
 
   void _swapToAcp(AcpClient client) {

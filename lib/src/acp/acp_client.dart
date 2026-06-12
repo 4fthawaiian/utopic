@@ -97,6 +97,9 @@ class _PendingManager {
     _pending.clear();
   }
 
+  /// Whether there are any requests still waiting for a response.
+  bool get hasPending => _pending.isNotEmpty;
+
   /// Serialise a request to a JSON line (with trailing newline).
   String encodeRequest(String method, int id, Map<String, dynamic>? params) {
     final request = {
@@ -227,9 +230,9 @@ class StdioAcpClient extends AcpClient {
   final _mgr = _PendingManager();
   StreamSubscription? _stdoutSub;
   StreamSubscription? _stderrSub;
+  final _stderrBuffer = StringBuffer();
 
-  /// [command] is the executable and any arguments, e.g.
-  /// `my-agent --model claude`.  It is split on whitespace.
+  /// [command] is the executable path; [args] are optional arguments.
   StdioAcpClient({required this.command, this.arguments = const []});
 
   @override
@@ -238,20 +241,41 @@ class StdioAcpClient extends AcpClient {
   @override
   bool get isConnected => _process != null;
 
+  /// Stderr output collected since [connect] (useful for debugging).
+  String get stderrOutput => _stderrBuffer.toString();
+
   @override
   Future<Map<String, dynamic>> connect() async {
     _process = await Process.start(command, arguments, mode: ProcessStartMode.normal);
 
-    _stdoutSub = _process!.stdout.transform(utf8.decoder).listen(
-      (String chunk) => _mgr.feed(utf8.encode(chunk)),
+    // Listen to stdout as raw bytes — avoids issues with utf8.decoder
+    // splitting multi-byte sequences at chunk boundaries.
+    _stdoutSub = _process!.stdout.listen(
+      (data) => _mgr.feed(data),
       onError: _onError,
       onDone: _onDone,
     );
 
-    // Swallow stderr (the subprocess may log diagnostics there).
-    _stderrSub = _process!.stderr.transform(utf8.decoder).listen((_) {});
+    // Collect stderr for diagnostics.
+    _stderrSub = _process!.stderr
+        .transform(utf8.decoder)
+        .listen((s) => _stderrBuffer.write(s));
 
-    final result = await _rpcCall(AcpMethods.initialize);
+    // If the process exits before responding to initialize, surface it.
+    _process!.exitCode.then((code) {
+      if (_mgr.hasPending) {
+        final detail = _stderrBuffer.isNotEmpty
+            ? ' (stderr: ${_stderrBuffer.toString().trim()})'
+            : '';
+        _mgr.failAll(
+          Exception('Subprocess exited with code $code$detail'),
+        );
+        _process = null;
+      }
+    });
+
+    final result = await _rpcCall(AcpMethods.initialize,
+        timeout: const Duration(seconds: 10));
     serverInfo = result;
     return result;
   }
@@ -261,7 +285,8 @@ class StdioAcpClient extends AcpClient {
     return _rpcCall(method, params: params);
   }
 
-  Future<Map<String, dynamic>> _rpcCall(String method, {Map<String, dynamic>? params}) async {
+  Future<Map<String, dynamic>> _rpcCall(String method,
+      {Map<String, dynamic>? params, Duration timeout = const Duration(seconds: 120)}) async {
     if (_process == null) throw StateError('not connected');
 
     final completer = Completer<Map<String, dynamic>>();
@@ -270,10 +295,10 @@ class StdioAcpClient extends AcpClient {
 
     try {
       final response = await completer.future.timeout(
-        const Duration(seconds: 120),
+        timeout,
         onTimeout: () {
           _mgr.remove(id);
-          throw TimeoutException('ACP call "$method" timed out after 120s');
+          throw TimeoutException('ACP call "$method" timed out after ${timeout.inSeconds}s');
         },
       );
       return _unwrapResponse(response);
