@@ -1,3 +1,22 @@
-# https://dart.dev/tools/private-files
-# Created by `dart pub`
+# Dart
 .dart_tool/
+.pub/
+build/
+*.dill
+*.dill.d
+*.js_
+*.js.deps
+*.js.map
+
+# Compiled binary
+utopic
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
