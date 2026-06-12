@@ -4,6 +4,16 @@ import 'dart:io';
 
 import 'acp_types.dart';
 
+/// Standard initialize params sent during the ACP handshake.
+const _initParams = {
+  'protocolVersion': 'v1',
+  'clientInfo': {
+    'name': 'utopic',
+    'version': '1.0.0',
+  },
+  'clientCapabilities': <String, dynamic>{},
+};
+
 // ============================================================================
 // Abstract AcpClient
 // ============================================================================
@@ -142,7 +152,7 @@ class TcpAcpClient extends AcpClient {
       onDone: _onDone,
     );
 
-    final result = await _rpcCall(AcpMethods.initialize);
+    final result = await _rpcCall(AcpMethods.initialize, params: _initParams);
     serverInfo = result;
     return result;
   }
@@ -262,7 +272,7 @@ class StdioAcpClient extends AcpClient {
         .listen((s) => _stderrBuffer.write(s));
 
     final result = await _rpcCall(AcpMethods.initialize,
-        timeout: const Duration(seconds: 10));
+        params: _initParams, timeout: const Duration(seconds: 10));
     serverInfo = result;
     return result;
   }
