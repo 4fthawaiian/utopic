@@ -748,17 +748,35 @@ class AgentService {
   Future<Map<String, dynamic>> connectToAcp(String host, int port) async {
     if (_acpClient != null) await _acpClient!.close();
 
-    final client = AcpClient(host: host, port: port);
+    final client = TcpAcpClient(host: host, port: port);
     final info = await client.connect();
     _acpClient = client;
 
+    _swapToAcp(client);
+    return info;
+  }
+
+  /// Connect to a local CLI subprocess and use it as the model provider.
+  ///
+  /// [command] is the executable path; [args] are optional arguments.
+  /// Communicates via stdin/stdout using the same JSON-RPC 2.0 protocol.
+  Future<Map<String, dynamic>> connectToAcpCli(String command, {List<String> args = const []}) async {
+    if (_acpClient != null) await _acpClient!.close();
+
+    final client = StdioAcpClient(command: command, arguments: args);
+    final info = await client.connect();
+    _acpClient = client;
+
+    _swapToAcp(client);
+    return info;
+  }
+
+  void _swapToAcp(AcpClient client) {
     if (ai is ZenAiService) {
       _zenFallback = ai as ZenAiService;
     }
-
     ai = AcpAiService(config: config, client: client);
     _notifyUpdates();
-    return info;
   }
 
   /// Disconnect from the remote ACP server and restore the Zen API provider.

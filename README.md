@@ -141,19 +141,23 @@ and an **ACP client** that lets utopic use remote ACP servers as model providers
 
 ACP methods supported: `initialize`, `session/create`, `session/list`, `agent/run`, `agent/cancel`.
 
-### ACP Client (remote server as model provider)
+### ACP Client (remote server or local CLI as model provider)
 
-Connect utopic to another ACP server and use it as the AI model provider.
-The remote server handles its own agent loop (tool calls, file ops, etc.)
-internally — utopic just forwards your prompt and displays the result.
+Connect utopic to another ACP server (TCP or local subprocess) and use it as
+the AI model provider. The remote handles its own agent loop (tool calls,
+file ops, etc.) internally — utopic just forwards your prompt and displays
+the result.
 
+**TCP:**
 ```
 > /acp-connect 10.0.0.5 8080
 ACP: other-agent (claude-sonnet-4) @ 10.0.0.5:8080
+```
 
-> write a Go HTTP server
-[prompt sent to remote ACP server]
-[remote runs its own agent loop, returns result]
+**Local CLI (spawns subprocess, talks over stdin/stdout):**
+```
+> /acp-connect cli:my-agent --model claude
+ACP: my-agent (claude-sonnet-4) via my-agent
 ```
 
 Disconnect to fall back to the local Zen API provider:

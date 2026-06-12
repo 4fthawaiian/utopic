@@ -172,6 +172,7 @@ class UtopicTuiApp extends TuiApp {
           '    /prompt <t>   Set per-conversation system prompt',
           '    /acp          Toggle ACP server (accept connections)',
           '    /acp-connect <host> <port>  Connect to remote ACP server as provider',
+          '    /acp-connect cli:<cmd>      Spawn local CLI as ACP provider',
           '    /acp-disconnect  Disconnect from remote ACP provider',
           '    /list         List conversations',
           '    /switch <n>   Switch conversation',
@@ -237,7 +238,18 @@ class UtopicTuiApp extends TuiApp {
         return;
 
       case 'acp-connect':
-        if (parts.length >= 3) {
+        if (parts.length < 2) {
+          _status = 'Usage: /acp-connect <host> <port>  or  /acp-connect cli:<command>';
+        } else if (parts[1].startsWith('cli:')) {
+          final cmd = parts[1].substring(4);
+          final args = parts.length > 2 ? parts.sublist(2) : <String>[];
+          _status = 'Spawning $cmd...';
+          _agent.connectToAcpCli(cmd, args: args).then((info) {
+            final name = info['server_name'] ?? 'acp';
+            final model = info['agent_info']?['model'] ?? 'unknown';
+            _status = 'ACP: $name ($model) via $cmd';
+          }).catchError((e) { _status = 'ACP cli error: $e'; });
+        } else if (parts.length >= 3) {
           final host = parts[1];
           final port = int.tryParse(parts[2]);
           if (port == null) {

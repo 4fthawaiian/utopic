@@ -993,7 +993,7 @@ void main() {
     });
 
     test('connect and initialize', () async {
-      final client = AcpClient(host: '127.0.0.1', port: port);
+      final client = TcpAcpClient(host: '127.0.0.1', port: port);
       final info = await client.connect();
       await client.close();
 
@@ -1002,7 +1002,7 @@ void main() {
     });
 
     test('call a registered handler', () async {
-      final client = AcpClient(host: '127.0.0.1', port: port);
+      final client = TcpAcpClient(host: '127.0.0.1', port: port);
       await client.connect();
 
       final result = await client.call('test.echo', params: {'msg': 'hello'});
@@ -1012,7 +1012,7 @@ void main() {
     });
 
     test('call throws on remote error', () async {
-      final client = AcpClient(host: '127.0.0.1', port: port);
+      final client = TcpAcpClient(host: '127.0.0.1', port: port);
       await client.connect();
 
       await expectLater(
@@ -1023,7 +1023,7 @@ void main() {
     });
 
     test('call throws on unknown method', () async {
-      final client = AcpClient(host: '127.0.0.1', port: port);
+      final client = TcpAcpClient(host: '127.0.0.1', port: port);
       await client.connect();
 
       await expectLater(
@@ -1034,13 +1034,75 @@ void main() {
     });
 
     test('serverInfo is populated after connect', () async {
-      final client = AcpClient(host: '127.0.0.1', port: port);
+      final client = TcpAcpClient(host: '127.0.0.1', port: port);
 
       // Before connect, no server info
       expect(client.serverInfo, isNull);
 
       await client.connect();
       expect(client.serverInfo, isNotNull);
+      await client.close();
+    });
+  });
+
+  // ==========================================================================
+  // StdioAcpClient – subprocess (stdin/stdout) transport
+  // ==========================================================================
+  group('StdioAcpClient', () {
+    test('connect and initialize', () async {
+      final client = StdioAcpClient(
+        command: 'dart',
+        arguments: ['run', 'test/helpers/acp_echo.dart'],
+      );
+      final info = await client.connect();
+
+      expect(info['server_name'], 'test-stdio-server');
+      expect(info['agent_info']['model'], 'test-stdio-model');
+      expect(client.label, contains('cli:'));
+
+      await client.close();
+    });
+
+    test('call echo handler', () async {
+      final client = StdioAcpClient(
+        command: 'dart',
+        arguments: ['run', 'test/helpers/acp_echo.dart'],
+      );
+      await client.connect();
+
+      final result = await client.call('test.echo', params: {'msg': 'yo'});
+      expect(result['msg'], 'yo');
+
+      await client.close();
+    });
+
+    test('call throws on error', () async {
+      final client = StdioAcpClient(
+        command: 'dart',
+        arguments: ['run', 'test/helpers/acp_echo.dart'],
+      );
+      await client.connect();
+
+      await expectLater(
+        client.call('test.error'),
+        throwsA(isA<AcpClientException>()),
+      );
+
+      await client.close();
+    });
+
+    test('call throws on unknown method', () async {
+      final client = StdioAcpClient(
+        command: 'dart',
+        arguments: ['run', 'test/helpers/acp_echo.dart'],
+      );
+      await client.connect();
+
+      await expectLater(
+        client.call('nope.not.a.method'),
+        throwsA(isA<AcpClientException>()),
+      );
+
       await client.close();
     });
   });
