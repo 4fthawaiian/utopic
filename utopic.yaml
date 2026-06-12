@@ -1,0 +1,27 @@
+# Utopic Configuration
+#
+# Config loading order:
+#   1. $UTOPIC_CONFIG env var
+#   2. ./utopic.yaml
+#   3. ~/.config/utopic/config.yaml
+#   4. ~/.utopic.yaml
+
+# OpenCode API Key (or set OPENCODE_API_KEY env var)
+# opencode_api_key: "sk-..."
+
+# Default model (free models available: deepseek-v4-flash-free, mimo-v2.5-free, etc.)
+default_model: "deepseek-v4-flash-free"
+
+# OpenCode Zen API endpoint
+zen_endpoint: "https://opencode.ai/zen"
+
+# Custom system prompt — replaces the default if set
+# system_prompt: |
+#   You are Utopic, a coding agent. Be concise.
+
+# ACP (Agent Client Protocol) server configuration
+acp:
+  enabled: false
+  host: "127.0.0.1"
+  port: 8080
+  # socket_path: "/tmp/utopic.sock"
