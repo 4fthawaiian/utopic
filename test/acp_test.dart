@@ -1107,13 +1107,13 @@ void main() {
     });
 
     test('connect fails fast on non-ACP process', () async {
-      // 'true' exits immediately — should surface the error, not hang.
+      // 'true' exits immediately — should surface exit code, not hang.
       final client = StdioAcpClient(command: 'true');
       await expectLater(
         client.connect(),
         throwsA(predicate((e) =>
             e is Exception &&
-            e.toString().contains('Subprocess exited'))),
+            e.toString().contains('Subprocess exited with code 0'))),
       );
       await client.close();
     });

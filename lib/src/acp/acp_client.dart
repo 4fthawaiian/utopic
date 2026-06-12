@@ -253,26 +253,13 @@ class StdioAcpClient extends AcpClient {
     _stdoutSub = _process!.stdout.listen(
       (data) => _mgr.feed(data),
       onError: _onError,
-      onDone: _onDone,
+      onDone: _onStdoutDone,
     );
 
     // Collect stderr for diagnostics.
     _stderrSub = _process!.stderr
         .transform(utf8.decoder)
         .listen((s) => _stderrBuffer.write(s));
-
-    // If the process exits before responding to initialize, surface it.
-    _process!.exitCode.then((code) {
-      if (_mgr.hasPending) {
-        final detail = _stderrBuffer.isNotEmpty
-            ? ' (stderr: ${_stderrBuffer.toString().trim()})'
-            : '';
-        _mgr.failAll(
-          Exception('Subprocess exited with code $code$detail'),
-        );
-        _process = null;
-      }
-    });
 
     final result = await _rpcCall(AcpMethods.initialize,
         timeout: const Duration(seconds: 10));
@@ -347,8 +334,23 @@ class StdioAcpClient extends AcpClient {
     close();
   }
 
-  void _onDone() {
-    _mgr.failAll(Exception('Subprocess exited'));
+  Future<void> _onStdoutDone() async {
+    // When stdout closes, the subprocess has exited (or will exit momentarily).
+    // Await the exit code so we can include it and any stderr in the error.
+    if (_process == null) return;
+    try {
+      final code = await _process!.exitCode;
+      if (_mgr.hasPending) {
+        final detail = _stderrBuffer.isNotEmpty
+            ? ' (stderr: ${_stderrBuffer.toString().trim()})'
+            : '';
+        _mgr.failAll(Exception('Subprocess exited with code $code$detail'));
+      }
+    } catch (_) {
+      if (_mgr.hasPending) {
+        _mgr.failAll(Exception('Subprocess stdout closed unexpectedly'));
+      }
+    }
     _process = null;
   }
 }
