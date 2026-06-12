@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:http/http.dart' as http;
 
-import '../models/zen_models.dart';
-import '../models/conversation.dart';
+import '../acp/acp_client.dart';
+import '../acp/acp_types.dart';
 import '../config/app_config.dart';
+import '../models/conversation.dart';
+import '../models/zen_models.dart';
 
 /// A tool call requested by the AI.
 class AiToolCall {
@@ -35,7 +38,7 @@ class AiToolCall {
   }
 }
 
-/// Result from an AI completion
+/// Result from an AI completion.
 class AiResult {
   final String content;
   final String model;
@@ -55,17 +58,43 @@ class AiResult {
   }) : hasToolCalls = toolCalls.isNotEmpty;
 }
 
-/// AI Service for interacting with OpenCode Zen (Responses API).
-class AiService {
+/// Abstract AI service — provides [complete] for sending prompts and
+/// [fetchModels] for discovering available models.
+abstract class AiService {
   final AppConfig config;
+
+  AiService({required this.config});
+
+  /// The currently active model identifier.
+  String get currentModel;
+  set currentModel(String model);
+
+  /// Send a completion request (non-streaming).
+  Future<AiResult> complete({
+    required Conversation conversation,
+    List<Map<String, dynamic>>? tools,
+    Map<String, dynamic>? extraParams,
+  });
+
+  /// Fetch available models from the provider.
+  Future<List<ZenModel>> fetchModels();
+}
+
+// ============================================================================
+// ZenAiService — calls the OpenCode Zen API (Responses API) over HTTP
+// ============================================================================
+
+class ZenAiService extends AiService {
   final http.Client _client;
   String? _currentModel;
 
-  AiService({required this.config, http.Client? client})
+  ZenAiService({required super.config, http.Client? client})
       : _client = client ?? http.Client();
 
+  @override
   String get currentModel => _currentModel ?? config.defaultModel;
 
+  @override
   set currentModel(String model) => _currentModel = model;
 
   /// Build the input array for the Responses API from a conversation.
@@ -82,7 +111,6 @@ class AiService {
           'content': msg.content,
         });
       } else if (msg.toolCalls != null && msg.toolCalls!.isNotEmpty) {
-        // Assistant message with tool calls
         input.add({
           'role': 'assistant',
           'content': null,
@@ -103,7 +131,7 @@ class AiService {
     return input;
   }
 
-  /// Send a completion request (non-streaming).
+  @override
   Future<AiResult> complete({
     required Conversation conversation,
     List<Map<String, dynamic>>? tools,
@@ -156,9 +184,7 @@ class AiService {
     );
   }
 
-
-
-  /// Fetch available models from the API.
+  @override
   Future<List<ZenModel>> fetchModels() async {
     try {
       final response = await _client.get(
@@ -181,7 +207,6 @@ class AiService {
     return ZenModels.all;
   }
 
-  /// Extract tool calls from a Responses API response.
   List<AiToolCall> _extractToolCalls(Map<String, dynamic> data) {
     final output = data['output'] as List?;
     if (output == null || output.isEmpty) return [];
@@ -195,10 +220,6 @@ class AiService {
     return calls;
   }
 
-  /// Extract the output text from a Responses API response.
-  /// Extract visible text from a Responses API response,
-  /// skipping reasoning/thinking content blocks and stripping
-  /// hidden thinking tags from the output.
   String _extractContent(Map<String, dynamic> data) {
     final output = data['output'] as List?;
     if (output == null || output.isEmpty) return '';
@@ -210,12 +231,11 @@ class AiService {
         for (final part in content) {
           if (part is Map<String, dynamic>) {
             final type = part['type'] as String?;
-            // Skip reasoning/thinking blocks
             if (type == 'thinking' || type == 'reasoning') continue;
             if (type == 'output_text') {
               var text = part['text'] as String? ?? '';
-              // Strip inline  reasoning tags some models output
-              text = text.replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '').trim();
+              text = text.replaceAll(
+                RegExp(r' thinking.*? response', dotAll: true), '').trim();
               return text;
             }
           }
@@ -225,7 +245,6 @@ class AiService {
     return '';
   }
 
-  /// Parse error details from the response body.
   String _parseError(String body) {
     try {
       final json = jsonDecode(body) as Map<String, dynamic>;
@@ -236,6 +255,64 @@ class AiService {
     } catch (_) {}
     return body;
   }
+}
 
+// ============================================================================
+// AcpAiService — delegates to a remote ACP server via agent/run
+// ============================================================================
 
+class AcpAiService extends AiService {
+  final AcpClient _client;
+
+  AcpAiService({required super.config, required AcpClient client})
+      : _client = client;
+
+  @override
+  String get currentModel =>
+      (_client.serverInfo?['agent_info']?['model'] as String?) ?? 'acp';
+
+  @override
+  set currentModel(String model) {
+    // ACP provider model is determined by the remote server — no-op here.
+  }
+
+  /// The remote server name.
+  String get serverName =>
+      (_client.serverInfo?['server_name'] as String?) ?? 'acp';
+
+  @override
+  Future<AiResult> complete({
+    required Conversation conversation,
+    List<Map<String, dynamic>>? tools,
+    Map<String, dynamic>? extraParams,
+  }) async {
+    // Extract the last user message as the prompt for agent/run.
+    final userMessages = conversation.messages
+        .where((m) => m.role == 'user')
+        .toList();
+    final prompt = userMessages.isNotEmpty
+        ? userMessages.last.content
+        : '';
+
+    final startTime = DateTime.now();
+
+    final result = await _client.call(AcpMethods.agentRun, params: {
+      'prompt': prompt,
+    });
+
+    final duration = DateTime.now().difference(startTime);
+
+    return AiResult(
+      content: (result['output'] as String?) ?? '',
+      model: currentModel,
+      duration: duration,
+      // Remote server handles tools internally — no tool calls returned.
+    );
+  }
+
+  @override
+  Future<List<ZenModel>> fetchModels() async {
+    // ACP servers don't expose a model list — return an empty list.
+    return [];
+  }
 }

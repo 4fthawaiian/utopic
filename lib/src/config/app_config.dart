@@ -75,18 +75,32 @@ class AcpConfig {
   final String socketPath;
   final int port;
   final String host;
+  final List<AcpClientConfig> clients;
 
   AcpConfig({
     required this.socketPath,
     required this.port,
     required this.host,
+    this.clients = const [],
   });
 
   factory AcpConfig.fromYaml(Map<dynamic, dynamic> yaml) {
+    final clientsRaw = yaml['clients'] as List? ?? [];
+    final clients = clientsRaw.map((c) {
+      if (c is Map) {
+        return AcpClientConfig(
+          host: c['host'] as String? ?? '127.0.0.1',
+          port: c['port'] as int? ?? 8080,
+        );
+      }
+      return AcpClientConfig();
+    }).toList();
+
     return AcpConfig(
       socketPath: yaml['socket_path'] as String? ?? '',
       port: yaml['port'] as int? ?? 8080,
       host: yaml['host'] as String? ?? '127.0.0.1',
+      clients: clients,
     );
   }
 
@@ -97,4 +111,11 @@ class AcpConfig {
       host: '127.0.0.1',
     );
   }
+}
+
+class AcpClientConfig {
+  final String host;
+  final int port;
+
+  AcpClientConfig({this.host = '127.0.0.1', this.port = 8080});
 }

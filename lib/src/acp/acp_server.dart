@@ -15,6 +15,12 @@ class AcpServer {
   final _clients = <_ClientConnection>[];
   bool _isRunning = false;
 
+  /// The port the TCP server is bound to (useful when binding to port 0).
+  int? get boundPort => _tcpServer?.port;
+
+  /// The host address the server is listening on.
+  String get boundHost => host;
+
   AcpServer({
     this.host = '127.0.0.1',
     this.port = 8080,
@@ -52,7 +58,9 @@ class AcpServer {
   Future<void> stop() async {
     if (!_isRunning) return;
 
-    for (final client in _clients) {
+    // Copy list before iterating: client.close() -> _removeClient() mutates _clients
+    final clients = List<_ClientConnection>.from(_clients);
+    for (final client in clients) {
       await client.close();
     }
     _clients.clear();
@@ -157,7 +165,7 @@ class _ClientConnection {
     send(utf8.encode('$json\n'));
   }
 
-  void _onData(List<int> data) {
+  Future<void> _onData(List<int> data) async {
     final buffer = utf8.decode(data);
     final lines = buffer.split('\n');
 
@@ -176,7 +184,7 @@ class _ClientConnection {
             params: json['params'],
             id: json['id'] as int,
           );
-          _server._handleRequest(this, request);
+          await _server._handleRequest(this, request);
         }
       } catch (e) {
         // Ignore parse errors

@@ -28,7 +28,7 @@ class AcpRequest extends AcpMessage {
     return {
       'jsonrpc': '2.0',
       'method': method,
-      'params': params,
+      if (params != null) 'params': params,
       'id': id,
     };
   }
@@ -91,7 +91,7 @@ class AcpNotification {
     return {
       'jsonrpc': '2.0',
       'method': method,
-      'params': params,
+      if (params != null) 'params': params,
     };
   }
 }
@@ -117,6 +117,7 @@ class AcpMethods {
   static const String terminalKill = 'terminal/kill';
   static const String terminalWait = 'terminal/wait';
   static const String terminalResize = 'terminal/resize';
+  static const String terminalRun = 'terminal/run';
 }
 
 /// ACP Session Types

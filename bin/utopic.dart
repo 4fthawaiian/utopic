@@ -56,7 +56,7 @@ Future<void> _runOnce(String prompt, AppConfig config) async {
   conv.addMessage(Message(role: 'system', content: systemPrompt));
   conv.addMessage(Message(role: 'user', content: prompt));
 
-  final ai = AiService(config: config);
+  final ai = ZenAiService(config: config);
 
   // Tool definitions
   final tools = [

@@ -14,9 +14,11 @@ import 'tools/tools.dart';
 /// Manages the agent lifecycle including ACP server and conversations
 class AgentService {
   final AppConfig config;
-  late final AiService ai;
+  AiService ai;
   final List<Conversation> _conversations = [];
   AcpServer? _acpServer;
+  AcpClient? _acpClient;
+  ZenAiService? _zenFallback;
   String? _cwd;
   bool _cancelRequested = false;
 
@@ -43,10 +45,13 @@ class AgentService {
 
   bool get isAcpRunning => _acpServer?.isRunning ?? false;
 
+  /// The port the ACP server is bound to (null if not running).
+  int? get acpPort => _acpServer?.boundPort;
+
   final SkillLoader _skills = SkillLoader();
 
-  AgentService({required this.config})
-      : ai = AiService(config: config);
+  AgentService({required this.config, AiService? aiService})
+      : ai = aiService ?? ZenAiService(config: config);
 
   /// Build the system prompt from all sources:
   ///   1. Default hardcoded prompt
@@ -177,6 +182,112 @@ class AgentService {
     return 'Error: unknown tool "$name"';
   }
 
+  /// Run the agent tool-calling loop on a conversation that already has a user
+  /// message appended.  Handles up to [maxIterations] rounds of:
+  ///   AI call → tool calls? → execute tools → loop → text response
+  ///
+  /// Returns the final [AiResult] on success, or `null` if cancelled or if the
+  /// iteration limit was reached without a text response.
+  Future<AiResult?> _runAgentLoop(Conversation conv) async {
+    const maxIterations = 10;
+    var iterations = 0;
+
+    try {
+      while (iterations < maxIterations) {
+        // Check cancellation before each AI call
+        if (_cancelRequested) {
+          _cancelRequested = false;
+          conv.addMessage(Message(
+            role: 'assistant',
+            content: '🛑 Cancelled.',
+          ));
+          _notifyUpdates();
+          return null;
+        }
+
+        iterations++;
+
+        final result = await ai.complete(
+          conversation: conv,
+          tools: _toolDefs,
+        );
+
+        // Check cancellation after AI call (may have been set during the request)
+        if (_cancelRequested) {
+          _cancelRequested = false;
+          conv.addMessage(Message(
+            role: 'assistant',
+            content: '🛑 Cancelled.',
+          ));
+          _notifyUpdates();
+          return null;
+        }
+
+        if (result.hasToolCalls) {
+          // Add assistant message with tool calls to conversation
+          conv.addMessage(Message(
+            role: 'assistant',
+            content: '',
+            toolCalls: result.toolCalls.map((tc) => {
+              'id': tc.id,
+              'name': tc.name,
+              'arguments': jsonEncode(tc.arguments),
+            }).toList(),
+          ));
+          _notifyUpdates();
+
+          // Execute each tool call
+          for (final tc in result.toolCalls) {
+            // Check cancellation before each tool execution
+            if (_cancelRequested) {
+              _cancelRequested = false;
+              conv.addMessage(Message(
+                role: 'assistant',
+                content: '🛑 Cancelled.',
+              ));
+              _notifyUpdates();
+              return null;
+            }
+
+            final output = await _executeTool(tc.name, tc.arguments);
+            conv.addMessage(Message(
+              role: 'tool',
+              content: output,
+              toolCallId: tc.id,
+            ));
+            _notifyUpdates();
+          }
+        } else {
+          // Text response — done
+          if (result.content.isNotEmpty) {
+            conv.addMessage(Message(
+              role: 'assistant',
+              content: result.content,
+            ));
+          }
+          _notifyUpdates();
+          return result;
+        }
+      }
+
+      // Hit iteration limit
+      conv.addMessage(Message(
+        role: 'assistant',
+        content: '⚠️ Reached maximum iterations ($maxIterations). '
+            'Your request may be incomplete. Try a more specific prompt.',
+      ));
+      _notifyUpdates();
+      return null;
+    } catch (e) {
+      conv.addMessage(Message(
+        role: 'assistant',
+        content: '⚠️ Error: $e',
+      ));
+      _notifyUpdates();
+      return null;
+    }
+  }
+
   /// Send a message and get response (with tool-calling agent loop).
   Future<void> sendMessage(String content) async {
     if (_activeConv == null) return;
@@ -224,109 +335,13 @@ class AgentService {
       return;
     }
 
-    // Agent loop — up to 10 iterations
-    const maxIterations = 10;
-    var iterations = 0;
+    final result = await _runAgentLoop(_activeConv!);
 
-    try {
-      while (iterations < maxIterations) {
-        // Check cancellation before each AI call
-        if (_cancelRequested) {
-          _cancelRequested = false;
-          _activeConv!.addMessage(Message(
-            role: 'assistant',
-            content: '🛑 Cancelled.',
-          ));
-          _notifyUpdates();
-          return;
-        }
-
-        iterations++;
-
-        final result = await ai.complete(
-          conversation: _activeConv!,
-          tools: _toolDefs,
-        );
-
-        // Check cancellation after AI call (may have been set during the request)
-        if (_cancelRequested) {
-          _cancelRequested = false;
-          _activeConv!.addMessage(Message(
-            role: 'assistant',
-            content: '🛑 Cancelled.',
-          ));
-          _notifyUpdates();
-          return;
-        }
-
-        if (result.hasToolCalls) {
-          // Add assistant message with tool calls to conversation
-          _activeConv!.addMessage(Message(
-            role: 'assistant',
-            content: '',
-            toolCalls: result.toolCalls.map((tc) => {
-              'id': tc.id,
-              'name': tc.name,
-              'arguments': jsonEncode(tc.arguments),
-            }).toList(),
-          ));
-          _notifyUpdates();
-
-          // Execute each tool call
-          for (final tc in result.toolCalls) {
-            // Check cancellation before each tool execution
-            if (_cancelRequested) {
-              _cancelRequested = false;
-              _activeConv!.addMessage(Message(
-                role: 'assistant',
-                content: '🛑 Cancelled.',
-              ));
-              _notifyUpdates();
-              return;
-            }
-
-            final output = await _executeTool(tc.name, tc.arguments);
-            _activeConv!.addMessage(Message(
-              role: 'tool',
-              content: output,
-              toolCallId: tc.id,
-            ));
-            _notifyUpdates();
-          }
-        } else {
-          // Text response — done
-          if (result.content.isNotEmpty) {
-            _activeConv!.addMessage(Message(
-              role: 'assistant',
-              content: result.content,
-            ));
-          }
-
-          // Set title from first exchange
-          if (_activeConv!.messageCount <= 5) {
-            _activeConv!.title = content.length > 40
-                ? '${content.substring(0, 40)}...'
-                : content;
-          }
-
-          _notifyUpdates();
-          return;
-        }
-      }
-
-      // Hit iteration limit — add a message about it
-      _activeConv!.addMessage(Message(
-        role: 'assistant',
-        content: '⚠️ Reached maximum iterations ($maxIterations). '
-            'Your request may be incomplete. Try a more specific prompt.',
-      ));
-      _notifyUpdates();
-    } catch (e) {
-      _activeConv!.addMessage(Message(
-        role: 'assistant',
-        content: '⚠️ Error: $e',
-      ));
-      _notifyUpdates();
+    // Set title from first exchange
+    if (result != null && _activeConv!.messageCount <= 5) {
+      _activeConv!.title = content.length > 40
+          ? '${content.substring(0, 40)}...'
+          : content;
     }
   }
 
@@ -474,7 +489,7 @@ class AgentService {
               '- Model: `${ai.currentModel}`\n'
               '- Zen endpoint: `${config.zenEndpoint}`\n'
               '- API key: ${config.opencodeApiKey != null ? '✅ set' : '❌ not set'}\n'
-              '- ACP: ${isAcpRunning ? "✅ running" : "❌ stopped"}\n'
+              '- ACP: ${isUsingAcp ? "✅ provider (${ai.currentModel})" : (isAcpRunning ? "✅ server running" : "❌ stopped")}\n'
               '- CWD: `$_cwd`\n'
               '- Prompt file: ${config.promptFile ?? "(none)"}\n'
               '- AGENTS.md (cwd): ${File(path.join(_cwd ?? ".", "AGENTS.md")).existsSync() ? "✅ found" : "(not found)"}\n'
@@ -543,8 +558,12 @@ class AgentService {
         'server_name': 'utopic-agent',
         'server_version': '1.0.0',
         'capabilities': [
+          'initialize',
           'agent/run',
-          'session/manage',
+          'agent/cancel',
+          'session/create',
+          'session/list',
+          'session/delete',
           'fs/read',
           'fs/write',
           'fs/list',
@@ -569,6 +588,15 @@ class AgentService {
     });
 
     _acpServer!.registerHandler(AcpMethods.sessionDelete, (request) async {
+      final params = request.params as Map<String, dynamic>?;
+      final id = params?['id'] as String?;
+      if (id != null) {
+        _conversations.removeWhere((c) => c.id == id);
+        if (_activeConv != null && _activeConv!.id == id && _conversations.isNotEmpty) {
+          _activeConv = _conversations.last;
+        }
+        _notifyUpdates();
+      }
       return {'deleted': true} as dynamic;
     });
 
@@ -598,31 +626,149 @@ class AgentService {
       }
       conv ??= Conversation(title: 'ACP Session');
 
+      // Ensure system prompt for new conversations
+      if (conv.messageCount == 0) {
+        conv.addMessage(Message(
+          role: 'system',
+          content: buildSystemPrompt(),
+        ));
+      }
+
       conv.addMessage(Message(role: 'user', content: prompt));
-      final result = await ai.complete(conversation: conv);
-      conv.addMessage(Message(role: 'assistant', content: result.content));
+      _notifyUpdates();
+
+      final result = await _runAgentLoop(conv);
 
       if (!_conversations.contains(conv)) {
         _conversations.add(conv);
       }
-      _notifyUpdates();
 
-      return {
-        'session_id': conv.id,
-        'status': 'completed',
-        'output': result.content,
-        'usage': {
-          'input_tokens': result.inputTokens,
-          'output_tokens': result.outputTokens,
-        },
-      };
+      if (result != null) {
+        return {
+          'session_id': conv.id,
+          'status': 'completed',
+          'output': result.content,
+          'usage': {
+            'input_tokens': result.inputTokens,
+            'output_tokens': result.outputTokens,
+          },
+        };
+      } else {
+        return {
+          'session_id': conv.id,
+          'status': 'cancelled',
+          'output': '',
+          'usage': {'input_tokens': 0, 'output_tokens': 0},
+        };
+      }
     });
 
     _acpServer!.registerHandler(AcpMethods.agentCancel, (request) async {
       return {'cancelled': true} as dynamic;
     });
 
+    // ── Filesystem methods ────────────────────────────────────────────
+    _acpServer!.registerHandler(AcpMethods.fsRead, (request) async {
+      final params = request.params as Map<String, dynamic>;
+      final p = params['path'] as String? ?? '';
+      if (p.isEmpty) throw ArgumentError('path is required');
+
+      final entity = FileSystemEntity.typeSync(p);
+      if (entity == FileSystemEntityType.notFound) {
+        throw ArgumentError('not found: $p');
+      }
+      if (entity == FileSystemEntityType.directory) {
+        throw ArgumentError('$p is a directory — use fs/list');
+      }
+
+      final file = File(p);
+      return {'content': file.readAsStringSync()};
+    });
+
+    _acpServer!.registerHandler(AcpMethods.fsWrite, (request) async {
+      final params = request.params as Map<String, dynamic>;
+      final p = params['path'] as String? ?? '';
+      final content = params['content'] as String? ?? '';
+      if (p.isEmpty) throw ArgumentError('path is required');
+
+      final file = File(p);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(content);
+      return {'success': true, 'size': content.length};
+    });
+
+    _acpServer!.registerHandler(AcpMethods.fsList, (request) async {
+      final params = request.params as Map<String, dynamic>;
+      final p = params['path'] as String? ?? '.';
+
+      final dir = Directory(p);
+      if (!dir.existsSync()) throw ArgumentError('not found: $p');
+
+      final entries = dir.listSync().map((e) {
+        final stat = e.statSync();
+        return {
+          'name': path.basename(e.path),
+          'type': e is File ? 'file' : 'directory',
+          'size': stat.size,
+          'modified': stat.modified.toIso8601String(),
+        };
+      }).toList();
+      return {'entries': entries, 'path': p};
+    });
+
+    // ── Terminal methods ──────────────────────────────────────────────
+    _acpServer!.registerHandler(AcpMethods.terminalRun, (request) async {
+      final params = request.params as Map<String, dynamic>;
+      final command = params['command'] as String? ?? '';
+      final timeout = (params['timeout'] as num?)?.toInt() ?? 30;
+      if (command.isEmpty) throw ArgumentError('command is required');
+
+      final r = await Process.run('bash', ['-c', command], runInShell: true)
+          .timeout(Duration(seconds: timeout));
+
+      return {
+        'stdout': r.stdout.toString(),
+        'stderr': r.stderr.toString(),
+        'exit_code': r.exitCode,
+      };
+    });
+
     await _acpServer!.start();
+    _notifyUpdates();
+  }
+
+  /// Whether the agent is currently using a remote ACP server as its
+  /// model provider.
+  bool get isUsingAcp => ai is AcpAiService;
+
+  /// Connect to a remote ACP server and use it as the model provider.
+  ///
+  /// Saves the current [ZenAiService] as a fallback so [disconnectFromAcp]
+  /// can restore it.
+  Future<Map<String, dynamic>> connectToAcp(String host, int port) async {
+    if (_acpClient != null) await _acpClient!.close();
+
+    final client = AcpClient(host: host, port: port);
+    final info = await client.connect();
+    _acpClient = client;
+
+    if (ai is ZenAiService) {
+      _zenFallback = ai as ZenAiService;
+    }
+
+    ai = AcpAiService(config: config, client: client);
+    _notifyUpdates();
+    return info;
+  }
+
+  /// Disconnect from the remote ACP server and restore the Zen API provider.
+  Future<void> disconnectFromAcp() async {
+    if (_acpClient != null) {
+      await _acpClient!.close();
+      _acpClient = null;
+    }
+    ai = _zenFallback ?? ZenAiService(config: config);
+    _zenFallback = null;
     _notifyUpdates();
   }
 
@@ -635,9 +781,10 @@ class AgentService {
   }
 
   String _getProviderName(String modelId) {
+    if (ai is AcpAiService) {
+      return (ai as AcpAiService).serverName;
+    }
     final model = ZenModels.get(modelId);
     return model?.provider ?? 'unknown';
   }
-
-
 }

@@ -15,7 +15,7 @@ the **Agent Client Protocol (ACP)**.
 - 🔄 **Agent loop** — Up to 10 iterations of tool calling (bash, read, write, edit), cancel anytime with `Ctrl+C`
 - 📂 **Conversations** — Multiple conversations, switch between them
 - ⚡ **One-shot mode** — `utopic "prompt"` prints the response and exits
-- 🔌 **ACP Server** — Agent Client Protocol for integration with other tools
+- 🔌 **ACP Server + Client** — Agent Client Protocol server for external tools, plus client mode to use remote ACP servers as model providers
 
 ## Quick start
 
@@ -129,7 +129,10 @@ Use `/model` to pick one interactively, or `/model <id>` to set directly.
 
 ## ACP (Agent Client Protocol)
 
-utopic runs an ACP server that external tools can use as a backend agent.
+utopic runs an **ACP server** that external tools can use as a backend agent,
+and an **ACP client** that lets utopic use remote ACP servers as model providers.
+
+### ACP Server (utopic as backend for other tools)
 
 ```bash
 /acp          # start the server
@@ -137,6 +140,37 @@ utopic runs an ACP server that external tools can use as a backend agent.
 ```
 
 ACP methods supported: `initialize`, `session/create`, `session/list`, `agent/run`, `agent/cancel`.
+
+### ACP Client (remote server as model provider)
+
+Connect utopic to another ACP server and use it as the AI model provider.
+The remote server handles its own agent loop (tool calls, file ops, etc.)
+internally — utopic just forwards your prompt and displays the result.
+
+```
+> /acp-connect 10.0.0.5 8080
+ACP: other-agent (claude-sonnet-4) @ 10.0.0.5:8080
+
+> write a Go HTTP server
+[prompt sent to remote ACP server]
+[remote runs its own agent loop, returns result]
+```
+
+Disconnect to fall back to the local Zen API provider:
+
+```
+> /acp-disconnect
+ACP disconnected  ·  deepseek-v4-flash-free
+```
+
+Auto-connect on startup via config:
+
+```yaml
+acp:
+  clients:
+    - host: "10.0.0.5"
+      port: 8080
+```
 
 ## Configuration
 
@@ -165,7 +199,7 @@ Config is loaded from (in priority order):
 lib/
 ├── utopic.dart
 └── src/
-    ├── acp/              # ACP protocol types, server
+    ├── acp/              # ACP protocol types, server, client
     ├── config/           # YAML/env config loading
     ├── models/           # Zen models catalog, conversation model
     ├── services/         # AI service (Zen API), agent loop, skills, tools

@@ -170,7 +170,9 @@ class UtopicTuiApp extends TuiApp {
           '    /models       List models',
           '    /prompt       Show current prompt override',
           '    /prompt <t>   Set per-conversation system prompt',
-          '    /acp          Toggle ACP server',
+          '    /acp          Toggle ACP server (accept connections)',
+          '    /acp-connect <host> <port>  Connect to remote ACP server as provider',
+          '    /acp-disconnect  Disconnect from remote ACP provider',
           '    /list         List conversations',
           '    /switch <n>   Switch conversation',
           '    /phobe        Toggle phobe mode (remove pride theming)',
@@ -180,10 +182,12 @@ class UtopicTuiApp extends TuiApp {
           for (final m in ZenModels.all)
             '    ${_agent.ai.currentModel == m.id ? '◀' : ' '} ${m.id}',
           '',
-          if (_agent.isAcpRunning)
-            '  ACP: ✅ ${config.acp.host}:${config.acp.port}'
+          if (_agent.isUsingAcp)
+            '  ACP provider: ✅ ${_agent.ai.currentModel}'
+          else if (_agent.isAcpRunning)
+            '  ACP server: ✅ ${config.acp.host}:${config.acp.port}'
           else
-            '  ACP: ❌ stopped  (/acp to start)',
+            '  ACP: ❌ stopped  (/acp to start server, /acp-connect for provider)',
           '',
         ];
         _scroll.setLines(lines);
@@ -224,11 +228,40 @@ class UtopicTuiApp extends TuiApp {
 
       case 'acp':
         if (_agent.isAcpRunning) {
-          _agent.stopAcpServer().then((_) => _status = 'ACP stopped');
+          _agent.stopAcpServer().then((_) => _status = 'ACP server stopped');
         } else {
           _agent.startAcpServer()
-              .then((_) => _status = 'ACP running on port ${config.acp.port}')
-              .catchError((e) => _status = 'ACP error: $e');
+              .then((_) { _status = 'ACP server running on port ${config.acp.port}'; })
+              .catchError((e) { _status = 'ACP error: $e'; });
+        }
+        return;
+
+      case 'acp-connect':
+        if (parts.length >= 3) {
+          final host = parts[1];
+          final port = int.tryParse(parts[2]);
+          if (port == null) {
+            _status = 'Invalid port: ${parts[2]}';
+          } else {
+            _status = 'Connecting to $host:$port...';
+            _agent.connectToAcp(host, port).then((info) {
+              final name = info['server_name'] ?? 'acp';
+              final model = info['agent_info']?['model'] ?? 'unknown';
+              _status = 'ACP: $name ($model) @ $host:$port';
+            }).catchError((e) { _status = 'ACP connect error: $e'; });
+          }
+        } else {
+          _status = 'Usage: /acp-connect <host> <port>';
+        }
+        return;
+
+      case 'acp-disconnect':
+        if (_agent.isUsingAcp) {
+          _agent.disconnectFromAcp().then((_) {
+            _status = 'ACP disconnected  ·  ${_agent.ai.currentModel}';
+          });
+        } else {
+          _status = 'Not connected to an ACP provider';
         }
         return;
 
