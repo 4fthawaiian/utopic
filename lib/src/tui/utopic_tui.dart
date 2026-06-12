@@ -4,6 +4,7 @@ import '../services/agent_service.dart';
 import '../config/app_config.dart';
 import '../models/conversation.dart';
 import '../models/zen_models.dart';
+import '../services/ai_service.dart';
 
 /// Utopic TUI Agent Application
 ///
@@ -25,6 +26,18 @@ class UtopicTuiApp extends TuiApp {
   bool _phobeMode = false;
   int _selIndex = 0;
   int _spinnerFrame = 0;
+
+  /// Models available for selection — ACP remote models if connected,
+  /// otherwise the built-in Zen models.
+  List<Map<String, dynamic>> get _modelList {
+    if (_agent.isUsingAcp && _agent.ai is AcpAiService) {
+      final acp = _agent.ai as AcpAiService;
+      final acpModels = acp.availableModels;
+      if (acpModels.isNotEmpty) return acpModels;
+    }
+    // Fall back to Zen models (or empty list).
+    return ZenModels.all.map((m) => {'value': m.id, 'name': m.id}).toList();
+  }
 
   /// Tick 6×/s for smooth animation of the thinking spinner.
   @override
@@ -180,8 +193,8 @@ class UtopicTuiApp extends TuiApp {
           '    /quit         Exit',
           '',
           '  MODELS:',
-          for (final m in ZenModels.all)
-            '    ${_agent.ai.currentModel == m.id ? '◀' : ' '} ${m.id}',
+          for (final m in _modelList)
+            '    ${_agent.ai.currentModel == m['value'] ? '◀' : ' '} ${m['name']}',
           '',
           if (_agent.isUsingAcp)
             '  ACP provider: ✅ ${_agent.ai.currentModel}'
@@ -205,7 +218,7 @@ class UtopicTuiApp extends TuiApp {
       case 'model':
         if (parts.length > 1) {
           final modelId = parts[1];
-          if (ZenModels.get(modelId) != null) {
+          if (_modelList.any((m) => m['value'] == modelId)) {
             _agent.ai.currentModel = modelId;
             _status = 'Model: $modelId';
           } else {
@@ -218,13 +231,13 @@ class UtopicTuiApp extends TuiApp {
 
       case 'models':
         final lines = <String>['', ' Available Models:', ''];
-        for (final m in ZenModels.all) {
-          final active = _agent.ai.currentModel == m.id ? ' ◀ ACTIVE' : '';
-          lines.add('   ${m.id}$active');
+        for (final m in _modelList) {
+          final active = _agent.ai.currentModel == m['value'] ? ' ◀ ACTIVE' : '';
+          lines.add('   ${m['name']}$active');
         }
         _scroll.setLines(lines);
         _scroll.scrollTop();
-        _status = '${ZenModels.all.length} models';
+        _status = '${_modelList.length} models';
         return;
 
       case 'acp':
@@ -316,7 +329,7 @@ class UtopicTuiApp extends TuiApp {
 
   void _startModelSelector(TuiContext context) {
     _selectingModel = true;
-    _selIndex = ZenModels.all.indexWhere((m) => m.id == _agent.ai.currentModel);
+    _selIndex = _modelList.indexWhere((m) => m['value'] == _agent.ai.currentModel);
     if (_selIndex < 0) _selIndex = 0;
     _renderModelSelector(context);
     _status = 'Select a model  ·  ↑↓ navigate  ·  Enter confirm  ·  Esc cancel';
@@ -330,11 +343,11 @@ class UtopicTuiApp extends TuiApp {
       ' ═══════════════════════════════════════',
       '',
     ];
-    for (int i = 0; i < ZenModels.all.length; i++) {
-      final m = ZenModels.all[i];
+    for (int i = 0; i < _modelList.length; i++) {
+      final m = _modelList[i];
       final cursor = i == _selIndex ? ' ▸ ' : '   ';
-      final active = m.id == _agent.ai.currentModel ? '  ◀ active' : '';
-      lines.add('$cursor${m.id}$active');
+      final active = m['value'] == _agent.ai.currentModel ? '  ◀ active' : '';
+      lines.add('$cursor${m['name']}$active');
     }
     lines.addAll([
       '',
@@ -343,6 +356,15 @@ class UtopicTuiApp extends TuiApp {
     ]);
     _scroll.setLines(lines);
     _scroll.scrollTop();
+
+    // Scroll so the selected model is visible.
+    final viewH = context.height - 4; // content area height
+    final selectedLine = 5 + _selIndex; // 5 header lines before models
+    if (selectedLine >= _scroll.offset + viewH) {
+      _scroll.offset = (selectedLine - viewH + 1).clamp(0, lines.length);
+    } else if (selectedLine < _scroll.offset) {
+      _scroll.offset = selectedLine;
+    }
   }
 
   void _handleModelSelector(TuiKeyEvent event, TuiContext context) {
@@ -354,16 +376,16 @@ class UtopicTuiApp extends TuiApp {
         }
         return;
       case TuiKeyCode.arrowDown:
-        if (_selIndex < ZenModels.all.length - 1) {
+        if (_selIndex < _modelList.length - 1) {
           _selIndex++;
           _renderModelSelector(context);
         }
         return;
       case TuiKeyCode.enter:
-        final model = ZenModels.all[_selIndex];
-        _agent.ai.currentModel = model.id;
+        final model = _modelList[_selIndex];
+        _agent.ai.currentModel = model['value'] as String;
         _selectingModel = false;
-        _status = 'Model: ${model.id}';
+        _status = 'Model: ${model['name']}';
         _refreshChat(context);
         return;
       case TuiKeyCode.escape:

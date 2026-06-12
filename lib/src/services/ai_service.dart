@@ -258,22 +258,80 @@ class ZenAiService extends AiService {
 }
 
 // ============================================================================
-// AcpAiService — delegates to a remote ACP server via agent/run
+// AcpAiService — delegates to a remote ACP server
 // ============================================================================
 
 class AcpAiService extends AiService {
   final AcpClient _client;
+  String? _sessionId;
+  String? _currentModelId;
+
+  /// Model options advertised by the remote server, keyed by config option id.
+  /// Populated from `session/update` notifications with `config_option_update`.
+  final Map<String, List<Map<String, dynamic>>> _configOptions = {};
+  List<String>? _turnChunks; // non-null during a prompt turn
 
   AcpAiService({required super.config, required AcpClient client})
-      : _client = client;
+      : _client = client {
+    // Always listen for config option updates from the remote server.
+    _client.onNotification = _onNotification;
+  }
+
+  void _onNotification(String method, Map<String, dynamic>? params) {
+    if (method == 'session/update' && params != null) {
+      final update = params['update'] as Map<String, dynamic>?;
+      if (update == null) return;
+
+      final kind = update['sessionUpdate'] as String?;
+
+      // Capture config options (models, modes, etc.)
+      if (kind == 'config_option_update') {
+        final options = update['configOptions'] as List?;
+        if (options != null) {
+          for (final opt in options) {
+            if (opt is Map<String, dynamic>) {
+              final id = opt['id'] as String?;
+              if (id != null) {
+                _configOptions[id] = List<Map<String, dynamic>>.from(
+                    (opt['options'] as List?)?.cast<Map<String, dynamic>>() ?? []);
+                if (_currentModelId == null && opt['currentValue'] != null) {
+                  _currentModelId = opt['currentValue'] as String?;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Collect text during a prompt turn.
+      if (kind == 'agent_message_chunk' && _turnChunks != null) {
+        final content = update['content'] as Map<String, dynamic>?;
+        if (content != null && content['type'] == 'text') {
+          final text = content['text'] as String?;
+          if (text != null) _turnChunks!.add(text);
+        }
+      }
+    }
+  }
+
+  /// Available models from the remote ACP server (if it advertises them).
+  List<Map<String, dynamic>> get availableModels =>
+      _configOptions['model'] ?? [];
 
   @override
-  String get currentModel =>
-      (_client.serverInfo?['agent_info']?['model'] as String?) ?? 'acp';
+  String get currentModel => _currentModelId ?? 'acp';
 
   @override
   set currentModel(String model) {
-    // ACP provider model is determined by the remote server — no-op here.
+    _currentModelId = model;
+    // If we have a session, tell the remote server to switch models.
+    if (_sessionId != null) {
+      _client.notify('session/set_config_option', params: {
+        'sessionId': _sessionId,
+        'optionId': 'model',
+        'value': model,
+      });
+    }
   }
 
   /// The remote server name.
@@ -286,7 +344,6 @@ class AcpAiService extends AiService {
     List<Map<String, dynamic>>? tools,
     Map<String, dynamic>? extraParams,
   }) async {
-    // Extract the last user message as the prompt for agent/run.
     final userMessages = conversation.messages
         .where((m) => m.role == 'user')
         .toList();
@@ -296,17 +353,69 @@ class AcpAiService extends AiService {
 
     final startTime = DateTime.now();
 
-    final result = await _client.call(AcpMethods.agentRun, params: {
-      'prompt': prompt,
-    });
+    // Try utopic-style agent/run first.
+    try {
+      final result = await _client.call(AcpMethods.agentRun, params: {
+        'prompt': prompt,
+      });
+      return _toResult(result, startTime);
+    } on AcpClientException catch (e) {
+      if (e.code == -32601 || e.code == -32602) {
+        // Method not found or invalid params — try devin-style protocol.
+        return await _devinComplete(prompt, startTime);
+      }
+      rethrow;
+    }
+  }
+
+  Future<AiResult> _devinComplete(String prompt, DateTime startTime) async {
+    // Create a session if we don't have one.
+    if (_sessionId == null) {
+      final session = await _client.call('session/new', params: {
+        'cwd': Directory.current.path,
+        'mcpServers': <Map<String, dynamic>>[],
+      });
+      _sessionId = (session['sessionId'] as String?) ??
+          (session['id'] as String?) ??
+          (session['session_id'] as String?) ??
+          'default';
+    }
+
+    // Collect text chunks from the shared notification handler.
+    _turnChunks = [];
+    try {
+      await _client.call('session/prompt', params: {
+        'sessionId': _sessionId,
+        'prompt': [
+          {'type': 'text', 'text': prompt},
+        ],
+      });
+    } finally {
+      _turnChunks = null;
+    }
 
     final duration = DateTime.now().difference(startTime);
+    final output = _turnChunks?.join() ?? '';
 
     return AiResult(
-      content: (result['output'] as String?) ?? '',
+      content: output,
       model: currentModel,
       duration: duration,
-      // Remote server handles tools internally — no tool calls returned.
+    );
+  }
+
+  AiResult _toResult(Map<String, dynamic> result, DateTime startTime) {
+    final duration = DateTime.now().difference(startTime);
+    final output = (result['output'] as String?) ??
+        (result['text'] as String?) ??
+        (result['content'] as String?) ??
+        (result['message'] as String?) ??
+        '';
+
+    return AiResult(
+      content: output,
+      model: currentModel,
+      duration: duration,
     );
   }
 
