@@ -753,6 +753,10 @@ class AgentService {
     _acpClient = client;
 
     _swapToAcp(client);
+    // Eagerly init session so the server sends model config options.
+    if (ai is AcpAiService) {
+      (ai as AcpAiService).initSession().catchError((_) {});
+    }
     return info;
   }
 
@@ -769,6 +773,10 @@ class AgentService {
       final info = await client.connect();
       _acpClient = client;
       _swapToAcp(client);
+      // Eagerly init session so the server sends model config options.
+      if (ai is AcpAiService) {
+        (ai as AcpAiService).initSession().catchError((_) {});
+      }
       return info;
     } catch (e) {
       await client.close();

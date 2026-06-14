@@ -95,8 +95,8 @@ class _PendingManager {
       if (line.trim().isEmpty) continue;
 
       try {
-        final json = jsonDecode(line) as Map<String, dynamic>;
-        final id = json['id'] as int?;
+        final json = jsonDecode(line.trim()) as Map<String, dynamic>;
+        final id = json['id'];
         if (id != null && _pending.containsKey(id)) {
           final completer = _pending.remove(id)!;
           if (!completer.isCompleted) completer.complete(json);
