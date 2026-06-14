@@ -17,7 +17,7 @@ class AgentService {
   AiService ai;
   final List<Conversation> _conversations = [];
   AcpServer? _acpServer;
-  AcpClient? _acpClient;
+  AcpDartConnection? _acpConnection;
   ZenAiService? _zenFallback;
   String? _cwd;
   bool _cancelRequested = false;
@@ -740,24 +740,27 @@ class AgentService {
   /// Whether the agent is currently using a remote ACP server as its
   /// model provider.
   bool get isUsingAcp => ai is AcpAiService;
-
   /// Connect to a remote ACP server and use it as the model provider.
   ///
   /// Saves the current [ZenAiService] as a fallback so [disconnectFromAcp]
   /// can restore it.
   Future<Map<String, dynamic>> connectToAcp(String host, int port) async {
-    if (_acpClient != null) await _acpClient!.close();
+    if (_acpConnection != null) await _acpConnection!.disconnect();
 
-    final client = TcpAcpClient(host: host, port: port);
-    final info = await client.connect();
-    _acpClient = client;
-
-    _swapToAcp(client);
-    // Eagerly init session so the server sends model config options.
-    if (ai is AcpAiService) {
-      (ai as AcpAiService).initSession().catchError((_) {});
+    final conn = AcpDartConnection();
+    try {
+      await conn.connectToTcp(host, port);
+      await conn.createSession();
+      _acpConnection = conn;
+      _swapToAcp(conn);
+      return {
+        'server_name': conn.serverName,
+        'agent_info': {'model': conn.currentModelId ?? 'unknown'},
+      };
+    } catch (e) {
+      await conn.disconnect();
+      rethrow;
     }
-    return info;
   }
 
   /// Connect to a local CLI subprocess and use it as the model provider.
@@ -765,38 +768,39 @@ class AgentService {
   /// [command] is the executable path; [args] are optional arguments.
   /// Communicates via stdin/stdout using the same JSON-RPC 2.0 protocol.
   Future<Map<String, dynamic>> connectToAcpCli(String command, {List<String> args = const []}) async {
-    if (_acpClient != null) await _acpClient!.close();
-    _acpClient = null;
+    if (_acpConnection != null) await _acpConnection!.disconnect();
+    _acpConnection = null;
 
-    final client = StdioAcpClient(command: command, arguments: args);
+    final conn = AcpDartConnection();
     try {
-      final info = await client.connect();
-      _acpClient = client;
-      _swapToAcp(client);
-      // Eagerly init session so the server sends model config options.
-      if (ai is AcpAiService) {
-        (ai as AcpAiService).initSession().catchError((_) {});
-      }
-      return info;
+      await conn.connectToCli(command, args);
+      // Create session eagerly so server sends model config options
+      await conn.createSession();
+      _acpConnection = conn;
+      _swapToAcp(conn);
+      return {
+        'server_name': conn.serverName,
+        'agent_info': {'model': conn.currentModelId ?? 'unknown'},
+      };
     } catch (e) {
-      await client.close();
+      await conn.disconnect();
       rethrow;
     }
   }
 
-  void _swapToAcp(AcpClient client) {
+  void _swapToAcp(AcpDartConnection conn) {
     if (ai is ZenAiService) {
       _zenFallback = ai as ZenAiService;
     }
-    ai = AcpAiService(config: config, client: client);
+    ai = AcpAiService(config: config, conn: conn);
     _notifyUpdates();
   }
 
   /// Disconnect from the remote ACP server and restore the Zen API provider.
   Future<void> disconnectFromAcp() async {
-    if (_acpClient != null) {
-      await _acpClient!.close();
-      _acpClient = null;
+    if (_acpConnection != null) {
+      await _acpConnection!.disconnect();
+      _acpConnection = null;
     }
     ai = _zenFallback ?? ZenAiService(config: config);
     _zenFallback = null;

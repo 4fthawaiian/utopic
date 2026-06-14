@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
-import '../acp/acp_client.dart';
+import '../acp/acp_dart_client.dart';
 import '../config/app_config.dart';
 import '../models/conversation.dart';
 import '../models/zen_models.dart';
@@ -257,157 +257,30 @@ class ZenAiService extends AiService {
 }
 
 // ============================================================================
-// AcpAiService — delegates to a remote ACP server
-//
-// Uses the standard ACP protocol:
-//   1. Initialize → discover server capabilities
-//   2. session/new (or session/create) → create a conversation session
-//   3. session/prompt → send a user prompt
-//   4. session/update notifications → receive response text (agent_message_chunk)
-//
-// The session/prompt response itself ONLY contains stopReason + usage — never
-// the text content. All actual text arrives via session/update notifications
-// during the prompt turn.
+// AcpAiService — delegates to a remote ACP server via acp_dart
 // ============================================================================
 
 class AcpAiService extends AiService {
-  final AcpClient _client;
-  String? _sessionId;
+  final AcpDartConnection _conn;
   String? _currentModelId;
 
-  /// Model options advertised by the remote server, keyed by config option id.
-  final Map<String, List<Map<String, dynamic>>> _configOptions = {};
+  AcpAiService({required super.config, required this._conn});
 
-  /// Collects text chunks during an active prompt turn.
-  /// Non-null while a session/prompt is in flight.
-  List<String>? _turnChunks;
-
-  AcpAiService({required super.config, required this._client}) {
-    _client.onNotification = _onNotification;
-  }
-
-  void _onNotification(String method, Map<String, dynamic>? params) {
-    stderr.writeln('ACP notification: method=$method params=$params');
-    if (method == 'session/update' && params != null) {
-      final update = params['update'] as Map<String, dynamic>?;
-      if (update == null) return;
-
-      final kind = update['sessionUpdate'] as String?;
-
-      // Capture config options (models, modes, etc.)
-      if (kind == 'config_option_update') {
-        final options = update['configOptions'] as List?;
-        if (options != null) {
-          _processConfigOptions(options);
-        }
-      }
-
-      // Collect text content during a prompt turn.
-      if (kind == 'agent_message_chunk' && _turnChunks != null) {
-        // content can be a single ContentBlock map or a list of them
-        final content = update['content'];
-        if (content is Map<String, dynamic>) {
-          _collectContentText(content);
-        } else if (content is List) {
-          for (final block in content) {
-            if (block is Map<String, dynamic>) {
-              _collectContentText(block);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /// Extract text from a ContentBlock map if it is a text block.
-  void _collectContentText(Map<String, dynamic> block) {
-    if (block['type'] == 'text') {
-      final text = block['text'] as String?;
-      if (text != null && _turnChunks != null) {
-        _turnChunks!.add(text);
-      }
-    }
-  }
-
-  /// Process config options from the ACP server, populating _configOptions.
-  void _processConfigOptions(List options) {
-    for (final opt in options) {
-      if (opt is Map<String, dynamic>) {
-        final id = opt['id'] as String?;
-        if (id != null) {
-          _configOptions[id] = List<Map<String, dynamic>>.from(
-              (opt['options'] as List?)?.cast<Map<String, dynamic>>() ?? []);
-          if (_currentModelId == null && opt['currentValue'] != null) {
-            _currentModelId = opt['currentValue'] as String?;
-          }
-        }
-      }
-    }
-    stderr.writeln('ACP: configOptions now: $_configOptions');
-  }
-
-  /// Available models from the remote ACP server (if it advertises them).
+  /// Available models from the remote ACP server.
   List<Map<String, dynamic>> get availableModels =>
-      _configOptions['model'] ?? [];
-
-  /// Create a session so we can send prompts.
-  /// Tries `session/new` (Devin-style) first, then `session/create` (ACP standard).
-  Future<void> initSession() async {
-    if (_sessionId != null) return;
-    for (final method in ['session/new', 'session/create']) {
-      try {
-        stderr.writeln('ACP: trying $method');
-        final session = await _client.call(method, params: {
-          'cwd': Directory.current.path,
-          'mcpServers': <Map<String, dynamic>>[],
-        });
-        stderr.writeln('ACP: session response: $session');
-        _sessionId = (session['sessionId'] as String?) ??
-            (session['id'] as String?) ??
-            (session['session_id'] as String?) ??
-            'default';
-
-        // Some servers include config options directly in the session response
-        final configOptions = session['configOptions'];
-        if (configOptions is List) {
-          stderr.writeln('ACP: configOptions from session response: $configOptions');
-          _processConfigOptions(configOptions);
-        }
-        final configOption = session['configOption'];
-        if (configOption is Map) {
-          final list = [configOption];
-          _processConfigOptions(list);
-        }
-
-        stderr.writeln('ACP: session created: $_sessionId');
-        if (_sessionId != null) break;
-      } catch (e) {
-        stderr.writeln('ACP: $method failed: $e');
-      }
-    }
-  }
+      _conn.availableModels.map((m) => m.toJson()).toList();
 
   @override
-  String get currentModel => _currentModelId ?? 'acp';
+  String get currentModel => _currentModelId ?? serverName;
 
   @override
   set currentModel(String model) {
     _currentModelId = model;
-    if (_sessionId != null) {
-      _client.notify('session/set_config_option', params: {
-        'sessionId': _sessionId,
-        'optionId': 'model',
-        'value': model,
-      });
-    }
+    _conn.setModel(model).catchError((_) {});
   }
 
   /// The remote server name.
-  String get serverName =>
-      (_client.serverInfo?['server_name'] as String?) ?? 'acp';
-
-  /// The underlying ACP client.
-  AcpClient get client => _client;
+  String get serverName => _conn.serverName;
 
   @override
   Future<AiResult> complete({
@@ -424,57 +297,21 @@ class AcpAiService extends AiService {
 
     final startTime = DateTime.now();
 
-    // Ensure we have a session before sending a prompt.
-    if (_sessionId == null) {
-      await initSession();
-    }
-
-    // Start collecting notification chunks BEFORE sending the prompt
-    // so we don't miss any that arrive before or with the response.
-    _turnChunks = [];
-
-    Map<String, dynamic>? result;
-    try {
-      result = await _client.call('session/prompt', params: {
-        'sessionId': _sessionId,
-        'prompt': [
-          {'type': 'text', 'text': prompt},
-        ],
-      });
-    } catch (e) {
-      rethrow;
-    } finally {
-      _turnChunks = null;
-    }
+    final result = await _conn.complete(prompt);
 
     final duration = DateTime.now().difference(startTime);
 
-    // Join all notification text chunks collected during the prompt turn.
-    final text = _turnChunks?.join() ?? '';
-    _turnChunks = null;
-
-    // Extract usage from the session/prompt response (some servers send it).
-    int inputTokens = 0, outputTokens = 0;
-    final usage = result['usage'];
-    if (usage is Map<String, dynamic>) {
-      inputTokens = (usage['inputTokens'] as int?) ??
-                    (usage['input_tokens'] as int?) ?? 0;
-      outputTokens = (usage['outputTokens'] as int?) ??
-                     (usage['output_tokens'] as int?) ?? 0;
-    }
-
     return AiResult(
-      content: text,
-      model: currentModel,
-      inputTokens: inputTokens,
-      outputTokens: outputTokens,
+      content: result['content'] as String? ?? '',
+      model: result['model'] as String? ?? currentModel,
+      inputTokens: result['inputTokens'] as int? ?? 0,
+      outputTokens: result['outputTokens'] as int? ?? 0,
       duration: duration,
     );
   }
 
   @override
   Future<List<ZenModel>> fetchModels() async {
-    // ACP servers don't expose a model list via the standard protocol.
     return [];
   }
 }
