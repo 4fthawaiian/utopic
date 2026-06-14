@@ -251,6 +251,7 @@ class UtopicTuiApp extends TuiApp {
         return;
 
       case 'acp-connect':
+      case 'acp-connection':
         // Debug: add a visible message to confirm handler runs
         _agent.activeConversation!.addMessage(Message(role: 'assistant', content: '🔌 Running acp-connect handler...'));
         _refreshChat(context);
