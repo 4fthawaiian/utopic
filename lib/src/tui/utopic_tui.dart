@@ -251,6 +251,9 @@ class UtopicTuiApp extends TuiApp {
         return;
 
       case 'acp-connect':
+        // Debug: add a visible message to confirm handler runs
+        _agent.activeConversation!.addMessage(Message(role: 'assistant', content: '🔌 Running acp-connect handler...'));
+        _refreshChat(context);
         if (parts.length < 2) {
           _status = 'Usage: /acp-connect <host> <port>  or  /acp-connect cli:<command>';
         } else if (parts[1].startsWith('cli:')) {
@@ -261,7 +264,11 @@ class UtopicTuiApp extends TuiApp {
             final name = info['server_name'] ?? 'acp';
             final model = info['agent_info']?['model'] ?? 'unknown';
             _status = 'ACP: $name ($model) via $cmd';
-          }).catchError((e) { _status = 'ACP cli error: $e'; });
+            _agent.activeConversation!.addMessage(Message(role: 'assistant', content: '✅ Connected to ACP: $name ($model)'));
+          }).catchError((e) {
+            _status = 'ACP cli error: $e';
+            _agent.activeConversation!.addMessage(Message(role: 'assistant', content: '❌ ACP cli error: $e'));
+          });
         } else if (parts.length >= 3) {
           final host = parts[1];
           final port = int.tryParse(parts[2]);
