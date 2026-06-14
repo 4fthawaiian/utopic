@@ -79,20 +79,15 @@ class AcpDartConnection {
 
   /// Connect to a local CLI subprocess as the ACP agent.
   Future<void> connectToCli(String command, List<String> args) async {
-    stderr.writeln('ACP: spawning $command ${args.join(' ')}');
     await disconnect();
 
-    _process = await Process.start(command, args,
-        mode: ProcessStartMode.normal);
-    stderr.writeln('ACP: spawned pid=${_process!.pid}');
+    _process = await Process.start(command, args);
 
-    // Pipe stderr from the child process to our stderr for debugging
+    // Consume child stderr to prevent buffer blocking
     _process!.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen((line) {
-      stderr.writeln('ACP(child): $line');
-    });
+        .listen((_) {});
 
     _stream = ndJsonStream(
       _process!.stdout,
@@ -102,9 +97,7 @@ class AcpDartConnection {
       },
     );
 
-    stderr.writeln('ACP: stream created, initializing...');
     await _createConnection();
-    stderr.writeln('ACP: connection ready');
   }
 
   /// Connect to a remote ACP agent via TCP.
@@ -196,7 +189,6 @@ class AcpDartConnection {
         ),
       ));
     } catch (e) {
-      stderr.writeln('ACP init failed: $e');
       rethrow;
     }
   }
@@ -206,7 +198,6 @@ class AcpDartConnection {
     if (_connection == null) throw StateError('Not connected');
     if (_sessionId != null) return;
 
-    stderr.writeln('ACP: creating session...');
     try {
       final response = await _connection!.newSession(NewSessionRequest(
         cwd: Directory.current.path,
@@ -221,7 +212,6 @@ class AcpDartConnection {
           ..addAll(response.configOptions!);
       }
     } catch (e) {
-      stderr.writeln('ACP newSession failed: $e');
       rethrow;
     }
   }
