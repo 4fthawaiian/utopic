@@ -79,10 +79,21 @@ class AcpDartConnection {
 
   /// Connect to a local CLI subprocess as the ACP agent.
   Future<void> connectToCli(String command, List<String> args) async {
+    stderr.writeln('ACP: spawning $command ${args.join(' ')}');
     await disconnect();
 
     _process = await Process.start(command, args,
         mode: ProcessStartMode.normal);
+    stderr.writeln('ACP: spawned pid=${_process!.pid}');
+
+    // Pipe stderr from the child process to our stderr for debugging
+    _process!.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) {
+      stderr.writeln('ACP(child): $line');
+    });
+
     _stream = ndJsonStream(
       _process!.stdout,
       _process!.stdin,
@@ -91,7 +102,9 @@ class AcpDartConnection {
       },
     );
 
+    stderr.writeln('ACP: stream created, initializing...');
     await _createConnection();
+    stderr.writeln('ACP: connection ready');
   }
 
   /// Connect to a remote ACP agent via TCP.
@@ -170,6 +183,7 @@ class AcpDartConnection {
       _stream!,
     );
 
+    stderr.writeln('ACP: sending initialize...');
     try {
       serverInfo = await _connection!.initialize(InitializeRequest(
         protocolVersion: 1,
@@ -181,6 +195,7 @@ class AcpDartConnection {
           terminal: true,
         ),
       ));
+      stderr.writeln('ACP: initialized, server=${serverInfo?.agentInfo?.name ?? '?'}');
     } catch (e) {
       stderr.writeln('ACP initialize failed: $e');
       rethrow;
@@ -192,6 +207,7 @@ class AcpDartConnection {
     if (_connection == null) throw StateError('Not connected');
     if (_sessionId != null) return;
 
+    stderr.writeln('ACP: creating session...');
     try {
       final response = await _connection!.newSession(NewSessionRequest(
         cwd: Directory.current.path,
@@ -199,11 +215,18 @@ class AcpDartConnection {
       ));
 
       _sessionId = response.sessionId;
+      stderr.writeln('ACP: session created id=${_sessionId}');
 
       if (response.configOptions != null) {
         _configOptions
           ..clear()
           ..addAll(response.configOptions!);
+        stderr.writeln('ACP: got ${response.configOptions!.length} config options');
+        for (final opt in response.configOptions!) {
+          stderr.writeln('ACP:   config: ${opt.id} = ${opt.name} (current=${opt.currentValue})');
+        }
+      } else {
+        stderr.writeln('ACP: no config options in response');
       }
     } catch (e) {
       stderr.writeln('ACP newSession failed: $e');
