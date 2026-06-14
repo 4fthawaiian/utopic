@@ -271,8 +271,7 @@ class AcpAiService extends AiService {
   final Map<String, List<Map<String, dynamic>>> _configOptions = {};
   List<String>? _turnChunks; // non-null during a prompt turn
 
-  AcpAiService({required super.config, required AcpClient client})
-      : _client = client {
+  AcpAiService({required super.config, required this._client}) {
     // Always listen for config option updates from the remote server.
     _client.onNotification = _onNotification;
   }

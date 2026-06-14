@@ -27,6 +27,8 @@ const _initParams = {
 /// - [TcpAcpClient] — connects over TCP
 /// - [StdioAcpClient] — spawns a local CLI subprocess, talks over stdin/stdout
 abstract class AcpClient {
+  /// Setter for notification callback.
+  set onNotification(void Function(String method, Map<String, dynamic>? params)? handler);
   /// Human-readable label for this connection.
   String get label;
 
@@ -62,6 +64,12 @@ class _PendingManager {
   final _pending = <int, Completer<Map<String, dynamic>>>{};
   String _buffer = '';
   int _nextId = 1;
+  void Function(String method, Map<String, dynamic>? params)? _onNotification;
+
+  /// Register a callback for incoming JSON-RPC notifications (messages without an id).
+  set onNotification(void Function(String method, Map<String, dynamic>? params)? handler) {
+    _onNotification = handler;
+  }
 
   /// Register a new request and return its id.
   int register(Completer<Map<String, dynamic>> completer) {
@@ -92,6 +100,11 @@ class _PendingManager {
         if (id != null && _pending.containsKey(id)) {
           final completer = _pending.remove(id)!;
           if (!completer.isCompleted) completer.complete(json);
+        } else if (id == null) {
+          final method = json['method'] as String?;
+          if (method != null) {
+            _onNotification?.call(method, json['params'] as Map<String, dynamic>?);
+          }
         }
       } catch (_) {
         // non-JSON line — ignore
@@ -134,6 +147,11 @@ class TcpAcpClient extends AcpClient {
   StreamSubscription? _subscription;
 
   TcpAcpClient({required this.host, required this.port});
+
+  @override
+  set onNotification(void Function(String method, Map<String, dynamic>? params)? handler) {
+    _mgr.onNotification = handler;
+  }
 
   @override
   String get label => '$host:$port';
@@ -199,12 +217,13 @@ class TcpAcpClient extends AcpClient {
   @override
   void notify(String method, {Map<String, dynamic>? params}) {
     if (_socket == null) return;
-    final notification = {
-      'jsonrpc': '2.0',
-      'method': method,
-      if (params != null) 'params': params,
-    };
-    _socket!.write('${jsonEncode(notification)}\n');
+    _socket!.write(
+      '${jsonEncode({
+        'jsonrpc': '2.0',
+        'method': method,
+        if (params != null) 'params': params,
+      })}\n',
+    );
   }
 
   @override
@@ -244,6 +263,11 @@ class StdioAcpClient extends AcpClient {
 
   /// [command] is the executable path; [args] are optional arguments.
   StdioAcpClient({required this.command, this.arguments = const []});
+
+  @override
+  set onNotification(void Function(String method, Map<String, dynamic>? params)? handler) {
+    _mgr.onNotification = handler;
+  }
 
   @override
   String get label => 'cli:$command';
@@ -320,12 +344,13 @@ class StdioAcpClient extends AcpClient {
   @override
   void notify(String method, {Map<String, dynamic>? params}) {
     if (_process == null) return;
-    final notification = {
-      'jsonrpc': '2.0',
-      'method': method,
-      if (params != null) 'params': params,
-    };
-    _process!.stdin.write('${jsonEncode(notification)}\n');
+    _process!.stdin.write(
+      '${jsonEncode({
+        'jsonrpc': '2.0',
+        'method': method,
+        if (params != null) 'params': params,
+      })}\n',
+    );
   }
 
   @override
