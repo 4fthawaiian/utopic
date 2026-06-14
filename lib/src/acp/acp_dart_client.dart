@@ -192,6 +192,7 @@ class AcpDartConnection {
           version: '1.0.0',
         ),
         clientCapabilities: ClientCapabilities(
+          fs: FileSystemCapability(),
           terminal: true,
         ),
       ));
@@ -215,7 +216,7 @@ class AcpDartConnection {
       ));
 
       _sessionId = response.sessionId;
-      stderr.writeln('ACP: session created id=${_sessionId}');
+      stderr.writeln('ACP: session created id=$_sessionId');
 
       if (response.configOptions != null) {
         _configOptions
