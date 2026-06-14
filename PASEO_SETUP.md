@@ -4,7 +4,12 @@
 
 Run utopic in daemon mode:
 ```bash
-./bin/utopic --acp-server
+dart run -- --acp-server
+```
+
+Or if compiled:
+```bash
+./utopic --acp-server
 ```
 
 You should see:
@@ -82,5 +87,5 @@ Expected response:
 
 For more information about utopic's ACP implementation, see:
 - `lib/src/acp/acp_server.dart`
-- `lib/src/acp/acp_client.dart`
+- `lib/src/acp/acp_dart_client.dart`
 - `lib/src/services/agent_service.dart`
