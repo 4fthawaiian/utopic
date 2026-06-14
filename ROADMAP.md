@@ -1,5 +1,32 @@
 # Utopic — Roadmap
 
+## ✅ Done
+
+### ACP Client — Connect to Remote ACP Servers via `acp_dart`
+
+**Problem:** utopic could only *host* an ACP server for other tools. It
+couldn't *connect* to external ACP agents as model providers.
+
+**Solution:** Replaced the hand-rolled ACP client with the official
+[`acp_dart`](https://pub.dev/packages/acp_dart) package (`ClientSideConnection`).
+ACP connections use typed session management, config option discovery,
+and proper notification handling.
+
+Connection methods:
+- `/acp-connect <host> <port>` — TCP connection
+- `/acp-connect cli:<cmd>` — local subprocess (stdin/stdout)
+- `/acp-connection` — alias for `acp-connect`
+- `/acp-disconnect` — restore local Zen API provider
+
+Tested with `devin acp` — 80+ models available via `/models`.
+
+**Key fixes along the way:**
+- `FileSystemCapability()` must be provided (Rust ACP server rejects `null`)
+- ACP model options read from `NewSessionResponse.configOptions`
+- Text chunks collected from `AgentMessageChunkSessionUpdate` notifications
+
+---
+
 ## Up Next
 
 ### 1. Readline-style input history

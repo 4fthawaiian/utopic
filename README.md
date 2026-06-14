@@ -58,6 +58,9 @@ dart run -- "what's in this directory?"
 | `/prompt` | Show current system prompt override |
 | `/prompt <text>` | Set a custom system prompt for this conversation |
 | `/acp` | Toggle ACP server |
+| `/acp-connect <host> <port>` or `/acp-connect cli:<cmd>` | Connect to ACP provider (TCP or local CLI) |
+| `/acp-connection` | Same as above (alias) |
+| `/acp-disconnect` | Disconnect from ACP provider |
 | `/list` | List conversations |
 | `/switch <n>` | Switch conversation |
 | `/config` | Show current configuration |
@@ -155,10 +158,23 @@ ACP: other-agent (claude-sonnet-4) @ 10.0.0.5:8080
 ```
 
 **Local CLI (spawns subprocess, talks over stdin/stdout):**
+
+Works great with `devin acp`:
+```
+> /acp-connection cli:devin acp
+ACP: affogato (swe-1-6-fast) via devin
+```
+
+Or any other ACP-compatible CLI:
 ```
 > /acp-connect cli:my-agent --model claude
 ACP: my-agent (claude-sonnet-4) via my-agent
 ```
+
+Both `/acp-connect` and `/acp-connection` work (alias).
+
+Once connected, `/models` lists all models from the remote server — select
+one interactively via `/model` or set directly with `/model <id>`.
 
 Disconnect to fall back to the local Zen API provider:
 
