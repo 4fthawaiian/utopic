@@ -287,6 +287,7 @@ class AcpAiService extends AiService {
   }
 
   void _onNotification(String method, Map<String, dynamic>? params) {
+    stderr.writeln('ACP notification: method=$method params=$params');
     if (method == 'session/update' && params != null) {
       final update = params['update'] as Map<String, dynamic>?;
       if (update == null) return;
@@ -297,18 +298,7 @@ class AcpAiService extends AiService {
       if (kind == 'config_option_update') {
         final options = update['configOptions'] as List?;
         if (options != null) {
-          for (final opt in options) {
-            if (opt is Map<String, dynamic>) {
-              final id = opt['id'] as String?;
-              if (id != null) {
-                _configOptions[id] = List<Map<String, dynamic>>.from(
-                    (opt['options'] as List?)?.cast<Map<String, dynamic>>() ?? []);
-                if (_currentModelId == null && opt['currentValue'] != null) {
-                  _currentModelId = opt['currentValue'] as String?;
-                }
-              }
-            }
-          }
+          _processConfigOptions(options);
         }
       }
 
@@ -339,6 +329,23 @@ class AcpAiService extends AiService {
     }
   }
 
+  /// Process config options from the ACP server, populating _configOptions.
+  void _processConfigOptions(List options) {
+    for (final opt in options) {
+      if (opt is Map<String, dynamic>) {
+        final id = opt['id'] as String?;
+        if (id != null) {
+          _configOptions[id] = List<Map<String, dynamic>>.from(
+              (opt['options'] as List?)?.cast<Map<String, dynamic>>() ?? []);
+          if (_currentModelId == null && opt['currentValue'] != null) {
+            _currentModelId = opt['currentValue'] as String?;
+          }
+        }
+      }
+    }
+    stderr.writeln('ACP: configOptions now: $_configOptions');
+  }
+
   /// Available models from the remote ACP server (if it advertises them).
   List<Map<String, dynamic>> get availableModels =>
       _configOptions['model'] ?? [];
@@ -349,17 +356,33 @@ class AcpAiService extends AiService {
     if (_sessionId != null) return;
     for (final method in ['session/new', 'session/create']) {
       try {
+        stderr.writeln('ACP: trying $method');
         final session = await _client.call(method, params: {
           'cwd': Directory.current.path,
           'mcpServers': <Map<String, dynamic>>[],
         });
+        stderr.writeln('ACP: session response: $session');
         _sessionId = (session['sessionId'] as String?) ??
             (session['id'] as String?) ??
             (session['session_id'] as String?) ??
             'default';
+
+        // Some servers include config options directly in the session response
+        final configOptions = session['configOptions'];
+        if (configOptions is List) {
+          stderr.writeln('ACP: configOptions from session response: $configOptions');
+          _processConfigOptions(configOptions);
+        }
+        final configOption = session['configOption'];
+        if (configOption is Map) {
+          final list = [configOption];
+          _processConfigOptions(list);
+        }
+
+        stderr.writeln('ACP: session created: $_sessionId');
         if (_sessionId != null) break;
-      } catch (_) {
-        // Try the next method.
+      } catch (e) {
+        stderr.writeln('ACP: $method failed: $e');
       }
     }
   }
