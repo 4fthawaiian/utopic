@@ -211,7 +211,11 @@ class TcpAcpClient extends AcpClient {
         data: err['data'],
       );
     }
-    return (response['result'] as Map<String, dynamic>?) ?? {};
+    final result = response['result'];
+    if (result is Map<String, dynamic>) return result;
+    if (result is Map) return Map<String, dynamic>.from(result);
+    if (result != null) return {'value': result};
+    return {};
   }
 
   @override
@@ -338,7 +342,11 @@ class StdioAcpClient extends AcpClient {
         data: err['data'],
       );
     }
-    return (response['result'] as Map<String, dynamic>?) ?? {};
+    final result = response['result'];
+    if (result is Map<String, dynamic>) return result;
+    if (result is Map) return Map<String, dynamic>.from(result);
+    if (result != null) return {'value': result};
+    return {};
   }
 
   @override
@@ -356,11 +364,19 @@ class StdioAcpClient extends AcpClient {
   @override
   Future<void> close() async {
     _mgr.failAll(Exception('Connection closed'));
+    // Close stdin first so the subprocess gets EOF on its input.
+    // Some servers (e.g. `devin acp`) wait for stdin and don't
+    // terminate on SIGTERM alone — they need to see the pipe close.
+    try {
+      _process?.stdin.close();
+    } catch (_) {}
     await _stdoutSub?.cancel();
     _stdoutSub = null;
     await _stderrSub?.cancel();
     _stderrSub = null;
-    _process?.kill();
+    try {
+      _process?.kill(ProcessSignal.sigkill);
+    } catch (_) {}
     _process = null;
   }
 

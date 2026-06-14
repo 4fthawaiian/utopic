@@ -15,7 +15,7 @@ class AcpRequest extends AcpMessage {
   @override
   final String method;
   final dynamic params;
-  final int id;
+  final dynamic id; // int or String per JSON-RPC 2.0
 
   AcpRequest({
     required this.method,
@@ -37,7 +37,7 @@ class AcpRequest extends AcpMessage {
 }
 
 class AcpResponse {
-  final int id;
+  final dynamic id; // int or String per JSON-RPC 2.0
   final dynamic result;
   final AcpError? error;
 
@@ -49,7 +49,7 @@ class AcpResponse {
 
   factory AcpResponse.fromJson(Map<String, dynamic> json) {
     return AcpResponse(
-      id: json['id'] as int,
+      id: json['id'],
       result: json['result'],
       error: json['error'] != null ? AcpError.fromJson(json['error'] as Map<String, dynamic>) : null,
     );

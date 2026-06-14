@@ -111,9 +111,19 @@ class AcpServer {
     }
 
     try {
-      final result = await handler(request);
+      // 5-minute timeout for handlers (agent/run can be slow).
+      final result = await handler(request).timeout(
+        const Duration(minutes: 5),
+        onTimeout: () => throw TimeoutException('Handler timed out'),
+      );
       final response = AcpResponse(id: request.id, result: result);
       client.sendResponse(response);
+    } on TimeoutException catch (e) {
+      final errorResponse = AcpResponse(
+        id: request.id,
+        error: AcpError(code: -32000, message: e.message ?? 'Handler timed out'),
+      );
+      client.sendResponse(errorResponse);
     } catch (e) {
       final errorResponse = AcpResponse(
         id: request.id,
@@ -127,25 +137,27 @@ class AcpServer {
 class _ClientConnection {
   final Socket _socket;
   final AcpServer _server;
-  final StreamController<List<int>> _controller = StreamController();
-  StreamSubscription? _subscription;
+  String _buffer = '';
 
   _ClientConnection(this._socket, this._server) {
-    _socket.listen(_controller.add, onError: _controller.addError, onDone: _controller.close);
-  }
-
-  void start() {
-    _subscription = _controller.stream.listen(
-      _onData,
-      onError: _onError,
-      onDone: _onDone,
+    _socket.listen(
+      _onChunk,
+      onError: (_) => _cleanup(),
+      onDone: _cleanup,
     );
   }
 
-  Future<void> close() async {
-    await _subscription?.cancel();
-    await _socket.close();
+  void start() {
+    // Data is already flowing through _onChunk. Nothing extra needed.
+  }
+
+  void _cleanup() {
     _server._removeClient(this);
+  }
+
+  Future<void> close() async {
+    await _socket.close();
+    _cleanup();
   }
 
   void send(List<int> data) {
@@ -156,47 +168,57 @@ class _ClientConnection {
     final json = jsonEncode({
       'jsonrpc': '2.0',
       'id': response.id,
-      if (response.error != null) 'error': {
-        'code': response.error!.code,
-        'message': response.error!.message,
-        if (response.error!.data != null) 'data': response.error!.data,
-      } else 'result': response.result,
+      if (response.error != null)
+        'error': {
+          'code': response.error!.code,
+          'message': response.error!.message,
+          if (response.error!.data != null) 'data': response.error!.data,
+        }
+      else
+        'result': response.result,
     });
     send(utf8.encode('$json\n'));
   }
 
-  Future<void> _onData(List<int> data) async {
-    final buffer = utf8.decode(data);
-    final lines = buffer.split('\n');
+  void _onChunk(List<int> chunk) {
+    _buffer += utf8.decode(chunk);
 
-    for (final line in lines) {
-      if (line.trim().isEmpty) continue;
+    while (true) {
+      final idx = _buffer.indexOf('\n');
+      if (idx < 0) break; // incomplete line, wait for more data
 
-      try {
-        final json = jsonDecode(line) as Map<String, dynamic>;
+      final line = _buffer.substring(0, idx);
+      _buffer = _buffer.substring(idx + 1);
 
-        if (json.containsKey('method') && !json.containsKey('id')) {
-          final notification = AcpNotification.fromJson(json);
-          _server._onNotification?.call(notification);
-        } else if (json.containsKey('id')) {
-          final request = AcpRequest(
-            method: json['method'] as String,
-            params: json['params'],
-            id: json['id'] as int,
-          );
-          await _server._handleRequest(this, request);
-        }
-      } catch (e) {
-        // Ignore parse errors
-      }
+      _processLine(line);
     }
   }
 
-  void _onError(Object error) {
-    close();
-  }
+  void _processLine(String line) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) return;
 
-  void _onDone() {
-    close();
+    try {
+      final json = jsonDecode(trimmed) as Map<String, dynamic>;
+
+      if (json.containsKey('method') && !json.containsKey('id')) {
+        // Notification (no id)
+        final notification = AcpNotification.fromJson(json);
+        _server._onNotification?.call(notification);
+      } else if (json.containsKey('id')) {
+        // Request — id can be int or String per JSON-RPC 2.0
+        final request = AcpRequest(
+          method: json['method'] as String,
+          params: json['params'],
+          id: json['id'],
+        );
+        // Don't await — process asynchronously so the read loop isn't
+        // blocked by slow handlers.
+        _server._handleRequest(this, request);
+      }
+    } catch (e) {
+      // Log parse errors so they're not invisible.
+      stderr.writeln('ACP server: failed to parse message: $e\n  raw: $line');
+    }
   }
 }
