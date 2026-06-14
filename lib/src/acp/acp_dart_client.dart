@@ -183,7 +183,6 @@ class AcpDartConnection {
       _stream!,
     );
 
-    stderr.writeln('ACP: sending initialize...');
     try {
       serverInfo = await _connection!.initialize(InitializeRequest(
         protocolVersion: 1,
@@ -196,9 +195,8 @@ class AcpDartConnection {
           terminal: true,
         ),
       ));
-      stderr.writeln('ACP: initialized, server=${serverInfo?.agentInfo?.name ?? '?'}');
     } catch (e) {
-      stderr.writeln('ACP initialize failed: $e');
+      stderr.writeln('ACP init failed: $e');
       rethrow;
     }
   }
@@ -216,18 +214,11 @@ class AcpDartConnection {
       ));
 
       _sessionId = response.sessionId;
-      stderr.writeln('ACP: session created id=$_sessionId');
 
       if (response.configOptions != null) {
         _configOptions
           ..clear()
           ..addAll(response.configOptions!);
-        stderr.writeln('ACP: got ${response.configOptions!.length} config options');
-        for (final opt in response.configOptions!) {
-          stderr.writeln('ACP:   config: ${opt.id} = ${opt.name} (current=${opt.currentValue})');
-        }
-      } else {
-        stderr.writeln('ACP: no config options in response');
       }
     } catch (e) {
       stderr.writeln('ACP newSession failed: $e');

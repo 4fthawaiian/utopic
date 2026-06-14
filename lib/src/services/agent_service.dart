@@ -763,41 +763,26 @@ class AgentService {
     }
   }
 
-  /// Log a diagnostic message to /tmp/utopic_acp.log
-  void _acpLog(String msg) {
-    try {
-      final f = File('/tmp/utopic_acp.log');
-      f.writeAsStringSync('${DateTime.now().toIso8601String()} $msg\n', mode: FileMode.append);
-    } catch (_) {}
-  }
-
   /// Connect to a local CLI subprocess and use it as the model provider.
   ///
   /// [command] is the executable path; [args] are optional arguments.
   /// Communicates via stdin/stdout using the same JSON-RPC 2.0 protocol.
   Future<Map<String, dynamic>> connectToAcpCli(String command, {List<String> args = const []}) async {
-    _acpLog('connectToAcpCli: command=$command args=$args');
     if (_acpConnection != null) await _acpConnection!.disconnect();
     _acpConnection = null;
 
     final conn = AcpDartConnection();
     try {
-      _acpLog('calling connectToCli...');
       await conn.connectToCli(command, args);
-      _acpLog('connectToCli done');
-      _acpLog('calling createSession...');
       // Create session eagerly so server sends model config options
       await conn.createSession();
-      _acpLog('createSession done, models=${conn.availableModels.length}');
       _acpConnection = conn;
       _swapToAcp(conn);
       return {
         'server_name': conn.serverName,
         'agent_info': {'model': conn.currentModelId ?? 'unknown'},
       };
-    } catch (e, st) {
-      _acpLog('ERROR: $e');
-      _acpLog('STACK: $st');
+    } catch (e) {
       await conn.disconnect();
       rethrow;
     }
