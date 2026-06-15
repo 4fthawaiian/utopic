@@ -28,6 +28,10 @@ void main(List<String> args) async {
       // Handled below after config load
       continue;
     }
+    if (args[i] == '--acp-stdio') {
+      // Handled below after config load
+      continue;
+    }
     if (args[i].startsWith('--')) {
       stderr.writeln('Unknown option: ${args[i]}');
       exit(1);
@@ -45,6 +49,10 @@ void main(List<String> args) async {
   }
 
   // ACP server mode: run headless, just serve ACP protocol
+  if (args.contains('--acp-stdio')) {
+    await _runAcpServer(config, stdio: true);
+    return;
+  }
   if (args.contains('--acp-server')) {
     await _runAcpServer(config);
     return;
@@ -60,22 +68,32 @@ void main(List<String> args) async {
 }
 
 /// Run in ACP server mode — no TUI, just serve ACP protocol.
-Future<void> _runAcpServer(AppConfig config) async {
+///
+/// If [stdio] is true, reads/writes JSON-RPC on stdin/stdout instead of
+/// listening on a TCP socket.
+Future<void> _runAcpServer(AppConfig config, {bool stdio = false}) async {
   final agent = AgentService(config: config);
   await agent.initialize();
-  await agent.startAcpServer();
-  stdout.writeln('ACP server started on ${config.acp.host}:${config.acp.port}');
-  stdout.writeln('Press Ctrl+C to stop...');
 
-  // Wait for SIGINT (Ctrl+C)
-  final completer = Completer<void>();
-  ProcessSignal.sigint.watch().listen((_) {
-    if (!completer.isCompleted) {
-      stdout.writeln('\nShutting down...');
-      completer.complete();
-    }
-  });
-  await completer.future;
+  if (stdio) {
+    await agent.startAcpServer(stdio: true);
+    stderr.writeln('ACP stdio server started on stdin/stdout');
+    // Block until stdin closes (server handles protocol internally)
+    await agent.acpServerDone;
+  } else {
+    await agent.startAcpServer();
+    stdout.writeln('ACP server started on ${config.acp.host}:${config.acp.port}');
+    stdout.writeln('Press Ctrl+C to stop...');
+
+    final completer = Completer<void>();
+    ProcessSignal.sigint.watch().listen((_) {
+      if (!completer.isCompleted) {
+        stdout.writeln('\nShutting down...');
+        completer.complete();
+      }
+    });
+    await completer.future;
+  }
 
   await agent.stopAcpServer();
   stdout.writeln('ACP server stopped.');
@@ -215,7 +233,8 @@ OPTIONS:
   --config <path>  Path to config file
   --prompt <path>  Path to a prompt file (appended to system prompt)
   --phobe          Launch in boring mode (no pride theming)
-  --acp-server     Run in daemon mode (headless ACP server, no TUI)
+  --acp-server     Run in daemon mode (headless ACP server over TCP, no TUI)
+  --acp-stdio      Run in daemon mode (headless ACP server over stdin/stdout)
   --help / -h      Show this help
 
 CONFIG:
@@ -244,6 +263,8 @@ PRE-CONFIGURED MODELS (via OpenCode Zen):
 ACP (Agent Client Protocol):
   Built-in ACP server for integration with other tools
   Default: tcp://127.0.0.1:${_defaultAcpPort()}
+  --acp-server     Headless TCP server (use nc, Paseo, etc.)
+  --acp-stdio      Headless stdio server (pipe-based, subprocess mode)
 
 SYSTEM PROMPT:
   Sources (merged in order):

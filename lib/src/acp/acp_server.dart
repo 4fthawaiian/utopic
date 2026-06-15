@@ -14,6 +14,7 @@ class AcpServer {
   ServerSocket? _unixServer;
   final _clients = <_ClientConnection>[];
   bool _isRunning = false;
+  StreamSubscription<List<int>>? _stdioSub;
 
   /// The port the TCP server is bound to (useful when binding to port 0).
   int? get boundPort => _tcpServer?.port;
@@ -27,7 +28,13 @@ class AcpServer {
     this.socketPath,
   });
 
+  /// Whether the server is running.
   bool get isRunning => _isRunning;
+
+  /// A future that completes when the server stops (e.g. stdin EOF in
+  /// stdio mode).
+  Future<void> get done => _doneCompleter.future;
+  final Completer<void> _doneCompleter = Completer<void>();
 
   void registerHandler(String method, AcpRequestHandler handler) {
     _handlers[method] = handler;
@@ -37,6 +44,7 @@ class AcpServer {
     _onNotification = handler;
   }
 
+  /// Start the server listening on TCP or Unix socket.
   Future<void> start() async {
     if (_isRunning) return;
 
@@ -55,8 +63,111 @@ class AcpServer {
     _isRunning = true;
   }
 
+  /// Start the server reading from stdin and writing to stdout.
+  ///
+  /// Handles newline-delimited JSON-RPC 2.0 messages exactly like the TCP
+  /// transport. The server runs until stdin closes (EOF) or [stop] is called.
+  Future<void> startStdio() async {
+    if (_isRunning) return;
+
+    _isRunning = true;
+    String buffer = '';
+
+    _stdioSub = stdin.listen(
+      (List<int> chunk) {
+        buffer += utf8.decode(chunk);
+        while (true) {
+          final idx = buffer.indexOf('\n');
+          if (idx < 0) break;
+          final line = buffer.substring(0, idx);
+          buffer = buffer.substring(idx + 1);
+          _processLineStdio(line);
+        }
+      },
+      onDone: () {
+        _isRunning = false;
+        if (!_doneCompleter.isCompleted) _doneCompleter.complete();
+      },
+    );
+  }
+
+  void _processLineStdio(String line) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) return;
+
+    try {
+      final json = jsonDecode(trimmed) as Map<String, dynamic>;
+
+      if (json.containsKey('method') && !json.containsKey('id')) {
+        // Notification (no id)
+        final notification = AcpNotification.fromJson(json);
+        _onNotification?.call(notification);
+      } else if (json.containsKey('id')) {
+        // Request
+        final request = AcpRequest(
+          method: json['method'] as String,
+          params: json['params'],
+          id: json['id'],
+        );
+        _handleStdioRequest(request);
+      }
+    } catch (e) {
+      stderr.writeln('ACP server: failed to parse message: $e\n  raw: $line');
+    }
+  }
+
+  Future<void> _handleStdioRequest(AcpRequest request) async {
+    final handler = _handlers[request.method];
+
+    if (handler == null) {
+      _writeStdioResponse(AcpResponse(
+        id: request.id,
+        error: AcpError(code: -32601, message: 'Method not found: ${request.method}'),
+      ));
+      return;
+    }
+
+    try {
+      final result = await handler(request).timeout(
+        const Duration(minutes: 5),
+        onTimeout: () => throw TimeoutException('Handler timed out'),
+      );
+      _writeStdioResponse(AcpResponse(id: request.id, result: result));
+    } on TimeoutException catch (e) {
+      _writeStdioResponse(AcpResponse(
+        id: request.id,
+        error: AcpError(code: -32000, message: e.message ?? 'Handler timed out'),
+      ));
+    } catch (e) {
+      _writeStdioResponse(AcpResponse(
+        id: request.id,
+        error: AcpError(code: -32603, message: e.toString()),
+      ));
+    }
+  }
+
+  void _writeStdioResponse(AcpResponse response) {
+    final json = jsonEncode({
+      'jsonrpc': '2.0',
+      'id': response.id,
+      if (response.error != null)
+        'error': {
+          'code': response.error!.code,
+          'message': response.error!.message,
+          if (response.error!.data != null) 'data': response.error!.data,
+        }
+      else
+        'result': response.result,
+    });
+    stdout.write('$json\n');
+  }
+
   Future<void> stop() async {
     if (!_isRunning) return;
+
+    // Cancel stdio subscription if active
+    await _stdioSub?.cancel();
+    _stdioSub = null;
 
     // Copy list before iterating: client.close() -> _removeClient() mutates _clients
     final clients = List<_ClientConnection>.from(_clients);
@@ -76,6 +187,7 @@ class AcpServer {
     }
 
     _isRunning = false;
+    if (!_doneCompleter.isCompleted) _doneCompleter.complete();
   }
 
   void _handleClient(Socket socket) {

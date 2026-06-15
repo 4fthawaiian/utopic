@@ -543,7 +543,7 @@ class AgentService {
   }
 
   /// Start the ACP server
-  Future<void> startAcpServer() async {
+  Future<void> startAcpServer({bool stdio = false}) async {
     if (isAcpRunning) return;
 
     _acpServer = AcpServer(
@@ -733,7 +733,11 @@ class AgentService {
       };
     });
 
-    await _acpServer!.start();
+    if (stdio) {
+      await _acpServer!.startStdio();
+    } else {
+      await _acpServer!.start();
+    }
     _notifyUpdates();
   }
 
@@ -806,6 +810,10 @@ class AgentService {
     _zenFallback = null;
     _notifyUpdates();
   }
+
+  /// A future that completes when the ACP server stops (e.g. stdin EOF
+  /// in stdio mode).
+  Future<void> get acpServerDone => _acpServer?.done ?? Future.value();
 
   /// Stop the ACP server
   Future<void> stopAcpServer() async {
