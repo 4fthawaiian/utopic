@@ -52,6 +52,29 @@ proper session management, and built-in model discovery.
 
 ---
 
+## ✅ ACP Server — Refactored to `acp_dart` (`AgentSideConnection`)
+
+**Goal:** Replace the hand-rolled ACP server with the official `acp_dart` package (`AgentSideConnection`), matching the client-side refactor.
+
+### Phase 4 — Hand-rolled ACP server (pre-`acp_dart`)
+
+| Commit | Description |
+|---|---|
+| `b519d3d` | Original ACP server with custom JSON-RPC + handler dispatch |
+
+### Phase 5 — Switch to `acp_dart` package for server
+
+| Commit | Description |
+|---|---|
+| `5dda980` | Wire up `--acp-server` CLI flag for headless ACP TCP server |
+| `3ac05cf` | Add `--acp-stdio` flag for stdio-based ACP server (subprocess mode) |
+| `e804c5a` | **Refactor ACP server to use `AgentSideConnection`** — replace custom parsing with `acp_dart`'s `Agent` interface (`AcpAgent` + `AcpAgentDelegate`) |
+| `eb47891` | Include available models in `NewSessionResponse` for Paseo compatibility |
+| `505e104` | Stream `session/update` notifications with agent reply text before final `PromptResponse` |
+| `acd1e1f` | Update docs: README, PASEO_SETUP, ROADMAP, TASKLIST |
+
+---
+
 ## 🧹 Other Improvements (from the same sprint)
 
 | Commit | Description |

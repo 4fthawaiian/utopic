@@ -27,6 +27,31 @@ Tested with `devin acp` — 80+ models available via `/models`.
 
 ---
 
+### ACP Server — Refactored to `acp_dart` (`AgentSideConnection`)
+
+**Problem:** The ACP server used a hand-rolled JSON-RPC implementation
+with custom handler dispatch, message framing, and transport (TCP/stdio).
+
+**Solution:** Replaced with `acp_dart`'s `AgentSideConnection` + `ndJsonStream`.
+The server now implements the standard `Agent` interface via `AcpAgent`,
+which delegates to `AgentService` through `AcpAgentDelegate`.
+
+- `acp_agent.dart` — new `Agent` implementation
+- `acp_server.dart` — thin transport wrapper (TCP/stdio) over `AgentSideConnection`
+- Standard ACP method names: `session/new`, `session/prompt`, `session/cancel`, `session/list`, `fs/read_text_file`, `fs/write_text_file`, `terminal/create`, etc.
+- Headless modes: `--acp-server` (TCP) and `--acp-stdio` (stdin/stdout)
+- `session/new` returns models list for Paseo compatibility
+- `session/prompt` streams reply via `session/update` notifications
+- Legacy aliases maintained for backward compatibility
+
+**Key fixes along the way:**
+- `InitializeRequest` handling for missing params (bare `initialize`)
+- `NewSessionRequest` requires `mcpServers` — injected if missing
+- `ProtocolVersion` injected as `1` for bare initialize
+- Stream wrapper injects default params for methods that require them
+
+---
+
 ## Up Next
 
 ### 1. Readline-style input history
