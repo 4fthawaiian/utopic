@@ -142,7 +142,7 @@ and an **ACP client** that lets utopic use remote ACP servers as model providers
 → Listening on tcp://127.0.0.1:8080
 ```
 
-ACP methods supported: `initialize`, `session/create`, `session/list`, `agent/run`, `agent/cancel`.
+ACP methods supported: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/list`, `session/delete`, `session/load`, `session/set_config_option`, `session/set_model`, `session/set_mode`, `fs/read_text_file`, `fs/write_text_file`, `fs/list`, `terminal/create`, `terminal/kill`, `terminal/output`, `terminal/release`, `terminal/wait_for_exit`.
 
 ### ACP Client (remote server or local CLI as model provider)
 
