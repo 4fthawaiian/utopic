@@ -35,8 +35,30 @@ class AcpAgent implements Agent {
   @override
   Future<NewSessionResponse> newSession(NewSessionRequest params) async {
     final result = delegate.onNewSession(params.cwd);
+
+    // Build model info from available models
+    final modelInfos = (result['models'] as List<dynamic>? ?? [])
+        .map((m) => ModelInfo(
+              modelId: (m as Map<String, dynamic>)['id'] as String,
+              name: m['name'] as String,
+              description: m['description'] as String?,
+            ))
+        .toList();
+
     return NewSessionResponse(
       sessionId: result['id'] as String,
+      models: modelInfos.isNotEmpty
+          ? SessionModelState(
+              availableModels: modelInfos,
+              currentModelId: (result['model'] as String?) ?? modelInfos.first.modelId,
+            )
+          : null,
+      modes: SessionModeState(
+        availableModes: [
+          SessionMode(id: 'code', name: 'Code', description: 'Standard coding mode'),
+        ],
+        currentModeId: 'code',
+      ),
     );
   }
 

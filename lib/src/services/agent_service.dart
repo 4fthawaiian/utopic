@@ -660,6 +660,12 @@ class AgentService implements AcpAgentDelegate {
     return {
       'id': sessionId,
       'cwd': cwd,
+      'model': ai.currentModel,
+      'models': ZenModels.all.map((m) => {
+        'id': m.id,
+        'name': m.displayName,
+        'description': '${m.provider} · ${m.contextLimit ~/ 1000}K context',
+      }).toList(),
     };
   }
 
