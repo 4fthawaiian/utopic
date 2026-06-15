@@ -54,15 +54,15 @@ Expected response:
     "server_version": "1.0.0",
     "capabilities": [
       "initialize",
-      "agent-run",
-      "agent-cancel",
-      "session-create",
-      "session-list",
-      "session-delete",
-      "fs-read",
-      "fs-write",
-      "fs-list",
-      "terminal-run"
+      "agent/run",
+      "agent/cancel",
+      "session/create",
+      "session/list",
+      "session/delete",
+      "fs/read",
+      "fs/write",
+      "fs/list",
+      "terminal/run"
     ],
     "agent_info": {
       "model": "<current-model>",

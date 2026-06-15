@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as path;
@@ -23,6 +24,10 @@ void main(List<String> args) async {
       phobeMode = true;
       continue;
     }
+    if (args[i] == '--acp-server') {
+      // Handled below after config load
+      continue;
+    }
     if (args[i].startsWith('--')) {
       stderr.writeln('Unknown option: ${args[i]}');
       exit(1);
@@ -39,6 +44,12 @@ void main(List<String> args) async {
     return;
   }
 
+  // ACP server mode: run headless, just serve ACP protocol
+  if (args.contains('--acp-server')) {
+    await _runAcpServer(config);
+    return;
+  }
+
   // Interactive TUI mode
   final app = UtopicTuiApp(config: config, phobeMode: phobeMode);
   final runner = UtopicRunner(app);
@@ -46,6 +57,28 @@ void main(List<String> args) async {
     stderr.writeln('Fatal error: $e');
     exit(1);
   });
+}
+
+/// Run in ACP server mode — no TUI, just serve ACP protocol.
+Future<void> _runAcpServer(AppConfig config) async {
+  final agent = AgentService(config: config);
+  await agent.initialize();
+  await agent.startAcpServer();
+  stdout.writeln('ACP server started on ${config.acp.host}:${config.acp.port}');
+  stdout.writeln('Press Ctrl+C to stop...');
+
+  // Wait for SIGINT (Ctrl+C)
+  final completer = Completer<void>();
+  ProcessSignal.sigint.watch().listen((_) {
+    if (!completer.isCompleted) {
+      stdout.writeln('\nShutting down...');
+      completer.complete();
+    }
+  });
+  await completer.future;
+
+  await agent.stopAcpServer();
+  stdout.writeln('ACP server stopped.');
 }
 
 /// Run a single prompt non-interactively and print the response.
@@ -182,6 +215,7 @@ OPTIONS:
   --config <path>  Path to config file
   --prompt <path>  Path to a prompt file (appended to system prompt)
   --phobe          Launch in boring mode (no pride theming)
+  --acp-server     Run in daemon mode (headless ACP server, no TUI)
   --help / -h      Show this help
 
 CONFIG:
