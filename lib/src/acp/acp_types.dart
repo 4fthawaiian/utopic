@@ -96,28 +96,44 @@ class AcpNotification {
   }
 }
 
-/// ACP Standard Methods
+/// ACP Standard Methods (matching acp_dart / agentclientprotocol.com spec)
 class AcpMethods {
   static const String initialize = 'initialize';
   static const String shutdown = 'shutdown';
-  static const String sessionCreate = 'session/create';
+  static const String authenticate = 'authenticate';
+
+  // Session lifecycle
+  static const String sessionNew = 'session/new';
   static const String sessionDelete = 'session/delete';
   static const String sessionList = 'session/list';
-  static const String agentRun = 'agent/run';
-  static const String agentCancel = 'agent/cancel';
-  static const String agentPause = 'agent/pause';
-  static const String agentResume = 'agent/resume';
-  static const String fsRead = 'fs/read';
-  static const String fsWrite = 'fs/write';
-  static const String fsList = 'fs/list';
-  static const String fsGlob = 'fs/glob';
-  static const String fsGrep = 'fs/grep';
+  static const String sessionLoad = 'session/load';
+  static const String sessionPrompt = 'session/prompt';
+  static const String sessionCancel = 'session/cancel';
+  static const String sessionSetMode = 'session/set_mode';
+  static const String sessionSetConfigOption = 'session/set_config_option';
+  static const String sessionSetModel = 'session/set_model';
+  static const String sessionFork = 'session/fork';
+  static const String sessionResume = 'session/resume';
+
+  // Client-side methods (agent → client)
+  static const String fsReadTextFile = 'fs/read_text_file';
+  static const String fsWriteTextFile = 'fs/write_text_file';
+  static const String sessionRequestPermission = 'session/request_permission';
+  static const String sessionUpdate = 'session/update';
   static const String terminalCreate = 'terminal/create';
-  static const String terminalWrite = 'terminal/write';
   static const String terminalKill = 'terminal/kill';
-  static const String terminalWait = 'terminal/wait';
-  static const String terminalResize = 'terminal/resize';
-  static const String terminalRun = 'terminal/run';
+  static const String terminalOutput = 'terminal/output';
+  static const String terminalRelease = 'terminal/release';
+  static const String terminalWaitForExit = 'terminal/wait_for_exit';
+
+  // Legacy non-standard aliases (keep for backward compat)
+  static const String legacySessionCreate = 'session/create';
+  static const String legacyAgentRun = 'agent/run';
+  static const String legacyAgentCancel = 'agent/cancel';
+  static const String legacyFsRead = 'fs/read';
+  static const String legacyFsWrite = 'fs/write';
+  static const String legacyFsList = 'fs/list';
+  static const String legacyTerminalRun = 'terminal/run';
 }
 
 /// ACP Session Types

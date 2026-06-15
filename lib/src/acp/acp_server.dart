@@ -1,20 +1,26 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
-import 'acp_types.dart';
+import 'package:acp_dart/acp_dart.dart';
 
+import 'acp_agent.dart';
+
+/// ACP server using [AgentSideConnection] for transport.
+///
+/// Supports TCP and stdio modes. Each TCP connection creates its own
+/// [AgentSideConnection] + [AcpAgent] pair, sharing [delegate] state.
 class AcpServer {
   final String host;
   final int port;
   final String? socketPath;
-  final Map<String, AcpRequestHandler> _handlers = {};
-  AcpNotificationHandler? _onNotification;
+  final AcpAgentDelegate delegate;
+
   ServerSocket? _tcpServer;
   ServerSocket? _unixServer;
-  final _clients = <_ClientConnection>[];
   bool _isRunning = false;
-  StreamSubscription<List<int>>? _stdioSub;
+  final _connections = <_ServerConnection>[];
+  _ServerConnection? _stdioConnection;
+  final Completer<void> _doneCompleter = Completer<void>();
 
   /// The port the TCP server is bound to (useful when binding to port 0).
   int? get boundPort => _tcpServer?.port;
@@ -22,27 +28,17 @@ class AcpServer {
   /// The host address the server is listening on.
   String get boundHost => host;
 
+  bool get isRunning => _isRunning;
+
+  /// A future that completes when the server stops.
+  Future<void> get done => _doneCompleter.future;
+
   AcpServer({
     this.host = '127.0.0.1',
     this.port = 8080,
     this.socketPath,
+    required this.delegate,
   });
-
-  /// Whether the server is running.
-  bool get isRunning => _isRunning;
-
-  /// A future that completes when the server stops (e.g. stdin EOF in
-  /// stdio mode).
-  Future<void> get done => _doneCompleter.future;
-  final Completer<void> _doneCompleter = Completer<void>();
-
-  void registerHandler(String method, AcpRequestHandler handler) {
-    _handlers[method] = handler;
-  }
-
-  void setNotificationHandler(AcpNotificationHandler handler) {
-    _onNotification = handler;
-  }
 
   /// Start the server listening on TCP or Unix socket.
   Future<void> start() async {
@@ -64,117 +60,25 @@ class AcpServer {
   }
 
   /// Start the server reading from stdin and writing to stdout.
-  ///
-  /// Handles newline-delimited JSON-RPC 2.0 messages exactly like the TCP
-  /// transport. The server runs until stdin closes (EOF) or [stop] is called.
   Future<void> startStdio() async {
     if (_isRunning) return;
 
     _isRunning = true;
-    String buffer = '';
-
-    _stdioSub = stdin.listen(
-      (List<int> chunk) {
-        buffer += utf8.decode(chunk);
-        while (true) {
-          final idx = buffer.indexOf('\n');
-          if (idx < 0) break;
-          final line = buffer.substring(0, idx);
-          buffer = buffer.substring(idx + 1);
-          _processLineStdio(line);
-        }
-      },
-      onDone: () {
-        _isRunning = false;
-        if (!_doneCompleter.isCompleted) _doneCompleter.complete();
-      },
-    );
-  }
-
-  void _processLineStdio(String line) {
-    final trimmed = line.trim();
-    if (trimmed.isEmpty) return;
-
-    try {
-      final json = jsonDecode(trimmed) as Map<String, dynamic>;
-
-      if (json.containsKey('method') && !json.containsKey('id')) {
-        // Notification (no id)
-        final notification = AcpNotification.fromJson(json);
-        _onNotification?.call(notification);
-      } else if (json.containsKey('id')) {
-        // Request
-        final request = AcpRequest(
-          method: json['method'] as String,
-          params: json['params'],
-          id: json['id'],
-        );
-        _handleStdioRequest(request);
-      }
-    } catch (e) {
-      stderr.writeln('ACP server: failed to parse message: $e\n  raw: $line');
-    }
-  }
-
-  Future<void> _handleStdioRequest(AcpRequest request) async {
-    final handler = _handlers[request.method];
-
-    if (handler == null) {
-      _writeStdioResponse(AcpResponse(
-        id: request.id,
-        error: AcpError(code: -32601, message: 'Method not found: ${request.method}'),
-      ));
-      return;
-    }
-
-    try {
-      final result = await handler(request).timeout(
-        const Duration(minutes: 5),
-        onTimeout: () => throw TimeoutException('Handler timed out'),
-      );
-      _writeStdioResponse(AcpResponse(id: request.id, result: result));
-    } on TimeoutException catch (e) {
-      _writeStdioResponse(AcpResponse(
-        id: request.id,
-        error: AcpError(code: -32000, message: e.message ?? 'Handler timed out'),
-      ));
-    } catch (e) {
-      _writeStdioResponse(AcpResponse(
-        id: request.id,
-        error: AcpError(code: -32603, message: e.toString()),
-      ));
-    }
-  }
-
-  void _writeStdioResponse(AcpResponse response) {
-    final json = jsonEncode({
-      'jsonrpc': '2.0',
-      'id': response.id,
-      if (response.error != null)
-        'error': {
-          'code': response.error!.code,
-          'message': response.error!.message,
-          if (response.error!.data != null) 'data': response.error!.data,
-        }
-      else
-        'result': response.result,
-    });
-    stdout.write('$json\n');
+    _stdioConnection = _ServerConnection._stdio(this);
+    _stdioConnection!._start();
   }
 
   Future<void> stop() async {
     if (!_isRunning) return;
 
-    // Cancel stdio subscription if active
-    await _stdioSub?.cancel();
-    _stdioSub = null;
-
-    // Copy list before iterating: client.close() -> _removeClient() mutates _clients
-    final clients = List<_ClientConnection>.from(_clients);
-    for (final client in clients) {
-      await client.close();
+    final connections = List<_ServerConnection>.from(_connections);
+    for (final conn in connections) {
+      await conn._close();
     }
-    _clients.clear();
+    _connections.clear();
+
+    await _stdioConnection?._close();
+    _stdioConnection = null;
 
     await _tcpServer?.close();
     await _unixServer?.close();
@@ -191,146 +95,80 @@ class AcpServer {
   }
 
   void _handleClient(Socket socket) {
-    final client = _ClientConnection(socket, this);
-    _clients.add(client);
-    client.start();
+    final conn = _ServerConnection._tcp(this, socket);
+    _connections.add(conn);
+    conn._start();
   }
 
-  void _removeClient(_ClientConnection client) {
-    _clients.remove(client);
-  }
-
-  void sendNotification(String method, {dynamic params}) {
-    final notification = AcpNotification(method: method, params: params);
-    final json = '${jsonEncode(notification.toJson())}\n';
-    final data = utf8.encode(json);
-
-    for (final client in _clients) {
-      client.send(data);
-    }
-  }
-
-  Future<void> _handleRequest(_ClientConnection client, AcpRequest request) async {
-    final handler = _handlers[request.method];
-
-    if (handler == null) {
-      final errorResponse = AcpResponse(
-        id: request.id,
-        error: AcpError(code: -32601, message: 'Method not found: ${request.method}'),
-      );
-      client.sendResponse(errorResponse);
-      return;
-    }
-
-    try {
-      // 5-minute timeout for handlers (agent/run can be slow).
-      final result = await handler(request).timeout(
-        const Duration(minutes: 5),
-        onTimeout: () => throw TimeoutException('Handler timed out'),
-      );
-      final response = AcpResponse(id: request.id, result: result);
-      client.sendResponse(response);
-    } on TimeoutException catch (e) {
-      final errorResponse = AcpResponse(
-        id: request.id,
-        error: AcpError(code: -32000, message: e.message ?? 'Handler timed out'),
-      );
-      client.sendResponse(errorResponse);
-    } catch (e) {
-      final errorResponse = AcpResponse(
-        id: request.id,
-        error: AcpError(code: -32603, message: e.toString()),
-      );
-      client.sendResponse(errorResponse);
-    }
+  void _removeConnection(_ServerConnection conn) {
+    _connections.remove(conn);
   }
 }
 
-class _ClientConnection {
-  final Socket _socket;
+/// Manages a single ACP connection (TCP socket or stdio).
+class _ServerConnection {
   final AcpServer _server;
-  String _buffer = '';
+  final Socket? _socket;
+  final bool _isStdio;
 
-  _ClientConnection(this._socket, this._server) {
-    _socket.listen(
-      _onChunk,
-      onError: (_) => _cleanup(),
-      onDone: _cleanup,
-    );
-  }
+  _ServerConnection._tcp(this._server, this._socket)
+      : _isStdio = false;
 
-  void start() {
-    // Data is already flowing through _onChunk. Nothing extra needed.
-  }
+  _ServerConnection._stdio(this._server)
+      : _socket = null,
+        _isStdio = true;
 
-  void _cleanup() {
-    _server._removeClient(this);
-  }
-
-  Future<void> close() async {
-    await _socket.close();
-    _cleanup();
-  }
-
-  void send(List<int> data) {
-    _socket.add(data);
-  }
-
-  void sendResponse(AcpResponse response) {
-    final json = jsonEncode({
-      'jsonrpc': '2.0',
-      'id': response.id,
-      if (response.error != null)
-        'error': {
-          'code': response.error!.code,
-          'message': response.error!.message,
-          if (response.error!.data != null) 'data': response.error!.data,
-        }
-      else
-        'result': response.result,
-    });
-    send(utf8.encode('$json\n'));
-  }
-
-  void _onChunk(List<int> chunk) {
-    _buffer += utf8.decode(chunk);
-
-    while (true) {
-      final idx = _buffer.indexOf('\n');
-      if (idx < 0) break; // incomplete line, wait for more data
-
-      final line = _buffer.substring(0, idx);
-      _buffer = _buffer.substring(idx + 1);
-
-      _processLine(line);
+  void _start() {
+    if (_isStdio) {
+      // Wrap stdin to detect EOF without conflicting with ndJsonStream
+      final inputController = StreamController<List<int>>();
+      stdin.listen(
+        inputController.add,
+        onError: inputController.addError,
+        onDone: () {
+          inputController.close();
+          _server.stop();
+        },
+        cancelOnError: false,
+      );
+      final raw = ndJsonStream(inputController.stream, stdout);
+      final stream = _ensureParams(raw);
+      AgentSideConnection(
+        (conn) => AcpAgent(conn, _server.delegate),
+        stream,
+      );
+    } else if (_socket != null) {
+      final raw = ndJsonStream(_socket.cast<List<int>>(), _socket);
+      final stream = _ensureParams(raw);
+      AgentSideConnection(
+        (conn) => AcpAgent(conn, _server.delegate),
+        stream,
+      );
+      // Detect client disconnect via socket.done Future
+      _socket.done.then((_) => _server._removeConnection(this));
     }
   }
 
-  void _processLine(String line) {
-    final trimmed = line.trim();
-    if (trimmed.isEmpty) return;
-
-    try {
-      final json = jsonDecode(trimmed) as Map<String, dynamic>;
-
-      if (json.containsKey('method') && !json.containsKey('id')) {
-        // Notification (no id)
-        final notification = AcpNotification.fromJson(json);
-        _server._onNotification?.call(notification);
-      } else if (json.containsKey('id')) {
-        // Request — id can be int or String per JSON-RPC 2.0
-        final request = AcpRequest(
-          method: json['method'] as String,
-          params: json['params'],
-          id: json['id'],
-        );
-        // Don't await — process asynchronously so the read loop isn't
-        // blocked by slow handlers.
-        _server._handleRequest(this, request);
+  /// Wraps an [AcpStream] to fix missing/null params for methods that
+  /// require them.
+  ///
+  /// Workaround for `acp_dart` crashing when `params` is null (e.g. bare
+  /// `{"method":"initialize"}` with no params key).
+  AcpStream _ensureParams(AcpStream original) {
+    final fixed = original.readable.map((msg) {
+      if (msg.containsKey('method') && !msg.containsKey('params')) {
+        msg['params'] = msg['method'] == 'initialize'
+            ? <String, dynamic>{'protocolVersion': 1}
+            : <String, dynamic>{};
       }
-    } catch (e) {
-      // Log parse errors so they're not invisible.
-      stderr.writeln('ACP server: failed to parse message: $e\n  raw: $line');
-    }
+      return msg;
+    });
+    return AcpStream(readable: fixed, writable: original.writable);
+  }
+
+  Future<void> _close() async {
+    try {
+      if (!_isStdio) _socket?.close();
+    } catch (_) {}
   }
 }

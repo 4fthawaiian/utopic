@@ -12,7 +12,7 @@ import 'skills.dart';
 import 'tools/tools.dart';
 
 /// Manages the agent lifecycle including ACP server and conversations
-class AgentService {
+class AgentService implements AcpAgentDelegate {
   final AppConfig config;
   AiService ai;
   final List<Conversation> _conversations = [];
@@ -550,188 +550,8 @@ class AgentService {
       host: config.acp.host,
       port: config.acp.port,
       socketPath: config.acp.socketPath.isNotEmpty ? config.acp.socketPath : null,
+      delegate: this,
     );
-
-    // Register ACP handlers
-    _acpServer!.registerHandler(AcpMethods.initialize, (request) async {
-      return {
-        'server_name': 'utopic-agent',
-        'server_version': '1.0.0',
-        'capabilities': [
-          'initialize',
-          'agent/run',
-          'agent/cancel',
-          'session/create',
-          'session/list',
-          'session/delete',
-          'fs/read',
-          'fs/write',
-          'fs/list',
-          'terminal/run',
-        ],
-        'agent_info': {
-          'model': ai.currentModel,
-          'provider': _getProviderName(ai.currentModel),
-        },
-      } as dynamic;
-    });
-
-    _acpServer!.registerHandler(AcpMethods.sessionCreate, (request) async {
-      final params = request.params as Map<String, dynamic>;
-      final sessionId = 'session_${DateTime.now().millisecondsSinceEpoch}';
-      return {
-        'id': sessionId,
-        'agent_id': params['agent_id'] ?? 'default',
-        'cwd': params['cwd'] ?? _cwd,
-        'metadata': params['metadata'] ?? {},
-      } as dynamic;
-    });
-
-    _acpServer!.registerHandler(AcpMethods.sessionDelete, (request) async {
-      final params = request.params as Map<String, dynamic>?;
-      final id = params?['id'] as String?;
-      if (id != null) {
-        _conversations.removeWhere((c) => c.id == id);
-        if (_activeConv != null && _activeConv!.id == id && _conversations.isNotEmpty) {
-          _activeConv = _conversations.last;
-        }
-        _notifyUpdates();
-      }
-      return {'deleted': true} as dynamic;
-    });
-
-    _acpServer!.registerHandler(AcpMethods.sessionList, (request) async {
-      return _conversations.map((c) => {
-        'id': c.id,
-        'title': c.title,
-        'message_count': c.messageCount,
-        'updated_at': c.updatedAt.toIso8601String(),
-      }).toList() as dynamic;
-    });
-
-    _acpServer!.registerHandler(AcpMethods.agentRun, (request) async {
-      final params = request.params as Map<String, dynamic>;
-      final prompt = params['prompt'] as String? ?? '';
-      final sessionId = params['session_id'] as String?;
-
-      // Find or create conversation
-      Conversation? conv;
-      if (sessionId != null) {
-        try {
-          conv = _conversations.firstWhere((c) => c.id == sessionId);
-        } catch (_) {}
-      }
-      if (conv == null && _conversations.isNotEmpty) {
-        conv = _conversations.last;
-      }
-      conv ??= Conversation(title: 'ACP Session');
-
-      // Ensure system prompt for new conversations
-      if (conv.messageCount == 0) {
-        conv.addMessage(Message(
-          role: 'system',
-          content: buildSystemPrompt(),
-        ));
-      }
-
-      conv.addMessage(Message(role: 'user', content: prompt));
-      _notifyUpdates();
-
-      final result = await _runAgentLoop(conv);
-
-      if (!_conversations.contains(conv)) {
-        _conversations.add(conv);
-      }
-
-      if (result != null) {
-        return {
-          'session_id': conv.id,
-          'status': 'completed',
-          'output': result.content,
-          'usage': {
-            'input_tokens': result.inputTokens,
-            'output_tokens': result.outputTokens,
-          },
-        };
-      } else {
-        return {
-          'session_id': conv.id,
-          'status': 'cancelled',
-          'output': '',
-          'usage': {'input_tokens': 0, 'output_tokens': 0},
-        };
-      }
-    });
-
-    _acpServer!.registerHandler(AcpMethods.agentCancel, (request) async {
-      return {'cancelled': true} as dynamic;
-    });
-
-    // ── Filesystem methods ────────────────────────────────────────────
-    _acpServer!.registerHandler(AcpMethods.fsRead, (request) async {
-      final params = request.params as Map<String, dynamic>;
-      final p = params['path'] as String? ?? '';
-      if (p.isEmpty) throw ArgumentError('path is required');
-
-      final entity = FileSystemEntity.typeSync(p);
-      if (entity == FileSystemEntityType.notFound) {
-        throw ArgumentError('not found: $p');
-      }
-      if (entity == FileSystemEntityType.directory) {
-        throw ArgumentError('$p is a directory — use fs/list');
-      }
-
-      final file = File(p);
-      return {'content': file.readAsStringSync()};
-    });
-
-    _acpServer!.registerHandler(AcpMethods.fsWrite, (request) async {
-      final params = request.params as Map<String, dynamic>;
-      final p = params['path'] as String? ?? '';
-      final content = params['content'] as String? ?? '';
-      if (p.isEmpty) throw ArgumentError('path is required');
-
-      final file = File(p);
-      await file.parent.create(recursive: true);
-      await file.writeAsString(content);
-      return {'success': true, 'size': content.length};
-    });
-
-    _acpServer!.registerHandler(AcpMethods.fsList, (request) async {
-      final params = request.params as Map<String, dynamic>;
-      final p = params['path'] as String? ?? '.';
-
-      final dir = Directory(p);
-      if (!dir.existsSync()) throw ArgumentError('not found: $p');
-
-      final entries = dir.listSync().map((e) {
-        final stat = e.statSync();
-        return {
-          'name': path.basename(e.path),
-          'type': e is File ? 'file' : 'directory',
-          'size': stat.size,
-          'modified': stat.modified.toIso8601String(),
-        };
-      }).toList();
-      return {'entries': entries, 'path': p};
-    });
-
-    // ── Terminal methods ──────────────────────────────────────────────
-    _acpServer!.registerHandler(AcpMethods.terminalRun, (request) async {
-      final params = request.params as Map<String, dynamic>;
-      final command = params['command'] as String? ?? '';
-      final timeout = (params['timeout'] as num?)?.toInt() ?? 30;
-      if (command.isEmpty) throw ArgumentError('command is required');
-
-      final r = await Process.run('bash', ['-c', command], runInShell: true)
-          .timeout(Duration(seconds: timeout));
-
-      return {
-        'stdout': r.stdout.toString(),
-        'stderr': r.stderr.toString(),
-        'exit_code': r.exitCode,
-      };
-    });
 
     if (stdio) {
       await _acpServer!.startStdio();
@@ -823,11 +643,87 @@ class AgentService {
     _notifyUpdates();
   }
 
-  String _getProviderName(String modelId) {
-    if (ai is AcpAiService) {
-      return (ai as AcpAiService).serverName;
+  // ─── AcpAgentDelegate implementation ─────────────────────────────────
+
+  @override
+  Map<String, dynamic> onInitialize() {
+    return {
+      'server_name': 'utopic-agent',
+      'server_version': '1.0.0',
+      'model': ai.currentModel,
+    };
+  }
+
+  @override
+  Map<String, dynamic> onNewSession(String cwd) {
+    final sessionId = 'session_${DateTime.now().millisecondsSinceEpoch}';
+    return {
+      'id': sessionId,
+      'cwd': cwd,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> onPrompt({
+    required String sessionId,
+    required String prompt,
+    required AgentSideConnection connection,
+  }) async {
+    // Find or create conversation
+    Conversation? conv;
+    try {
+      conv = _conversations.firstWhere((c) => c.id == sessionId);
+    } catch (_) {}
+    if (conv == null) {
+      if (_conversations.isNotEmpty) {
+        conv = _conversations.last;
+      } else {
+        conv = Conversation(title: 'ACP Session');
+      }
     }
-    final model = ZenModels.get(modelId);
-    return model?.provider ?? 'unknown';
+
+    // Ensure system prompt for new conversations
+    if (conv.messageCount == 0) {
+      conv.addMessage(Message(
+        role: 'system',
+        content: buildSystemPrompt(),
+      ));
+    }
+
+    conv.addMessage(Message(role: 'user', content: prompt));
+    _notifyUpdates();
+
+    final result = await _runAgentLoop(conv);
+
+    if (!_conversations.contains(conv)) {
+      _conversations.add(conv);
+    }
+
+    if (result != null) {
+      return {
+        'inputTokens': result.inputTokens,
+        'outputTokens': result.outputTokens,
+      };
+    } else {
+      return {
+        'inputTokens': 0,
+        'outputTokens': 0,
+      };
+    }
+  }
+
+  @override
+  void onCancel(String sessionId) {
+    _cancelRequested = true;
+  }
+
+  @override
+  List<Map<String, dynamic>> onListSessions() {
+    return _conversations.map((c) => {
+      'id': c.id,
+      'title': c.title,
+      'cwd': _cwd,
+      'updated_at': c.updatedAt.toIso8601String(),
+    }).toList();
   }
 }
