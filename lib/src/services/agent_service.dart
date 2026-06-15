@@ -706,6 +706,16 @@ class AgentService implements AcpAgentDelegate {
     }
 
     if (result != null) {
+      // Stream the full response as a session/update notification
+      // so the client (Paseo) can display the reply.
+      try {
+        await connection.sessionUpdate(SessionNotification(
+          sessionId: sessionId,
+          update: AgentMessageChunkSessionUpdate(
+            content: TextContentBlock(text: result.content),
+          ),
+        ));
+      } catch (_) {}
       return {
         'inputTokens': result.inputTokens,
         'outputTokens': result.outputTokens,
