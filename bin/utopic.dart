@@ -268,8 +268,8 @@ PRE-CONFIGURED MODELS (via OpenCode Zen):
 ACP (Agent Client Protocol):
   Built-in ACP server for integration with other tools
   Default: tcp://127.0.0.1:${_defaultAcpPort()}
-  --acp-server     Headless TCP server (use nc, Paseo, etc.)
-  --acp-stdio      Headless stdio server (pipe-based, subprocess mode)
+  --acp-server     Headless TCP server (use nc, telnet, etc.)
+  --acp-stdio      Headless stdio server (Paseo, subprocess pipes)
 
 SYSTEM PROMPT:
   Sources (merged in order):

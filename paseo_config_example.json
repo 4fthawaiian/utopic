@@ -1,9 +1,8 @@
 {
   "acp": {
     "enabled": true,
-    "host": "127.0.0.1",
-    "port": 8080,
-    "timeout": 30,
+    "command": "dart run -- --acp-stdio",
+    "timeout": 120,
     "retryAttempts": 3,
     "retryDelay": 1000
   }

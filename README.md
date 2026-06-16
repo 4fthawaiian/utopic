@@ -137,9 +137,27 @@ and an **ACP client** that lets utopic use remote ACP servers as model providers
 
 ### ACP Server (utopic as backend for other tools)
 
+Utopic can act as an ACP agent for external tools like **Paseo**. Two modes:
+
+**Stdio (recommended for subprocess-based tools):**
+
 ```bash
-/acp          # start the server
+dart run -- --acp-stdio
+# or compiled: ./utopic --acp-stdio
+```
+
+This spawns utopic as a JSON-RPC 2.0 endpoint over **stdin/stdout** —
+no network port needed. The tool launches utopic as a subprocess and
+communicates through pipes.
+
+**TCP (for network-based tools):**
+
+```bash
+/acp          # start the server inside the TUI
 → Listening on tcp://127.0.0.1:8080
+
+# or headless:
+dart run -- --acp-server
 ```
 
 ACP methods supported: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/list`, `session/delete`, `session/load`, `session/set_config_option`, `session/set_model`, `session/set_mode`, `fs/read_text_file`, `fs/write_text_file`, `fs/list`, `terminal/create`, `terminal/kill`, `terminal/output`, `terminal/release`, `terminal/wait_for_exit`.
