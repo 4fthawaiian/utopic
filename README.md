@@ -6,6 +6,8 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 
 🏳️‍🌈✨ *Your fabulously queer coding companion in the terminal. Built with Paseo, works great with Paseo.*
 
+<img src="Utopic.png" alt="Utopic TUI screenshot" width="700">
+
 ## Features
 
 - 🖥️ **Terminal UI** — Non-modal, just type and send. Rainbow pride theming (toggle with `/phobe` or `--phobe`)
