@@ -4,6 +4,10 @@
 
 ## 1.1.0
 
+- **Fix ACP error propagation** — Zen API errors (e.g. 429 rate limit) are now
+  returned to the ACP client as JSON-RPC error responses instead of being
+  silently swallowed with an empty success. (`agent_service.dart`)
+- Add `--config <path>` CLI flag for explicit config file path.
 - Add ACP client support — utopic can connect to remote ACP servers and use
   them as model providers (`/acp-connect`, `/acp-disconnect` commands).
 - Add `StdioAcpClient` — spawn a local CLI subprocess as an ACP provider

@@ -8,6 +8,7 @@ import 'package:utopic/src/vendor/runner.dart';
 
 void main(List<String> args) async {
   String? promptFile;
+  String? configPath;
   var phobeMode = false;
   final positional = <String>[];
 
@@ -18,6 +19,10 @@ void main(List<String> args) async {
     }
     if (args[i] == '--prompt' && i + 1 < args.length) {
       promptFile = args[++i];
+      continue;
+    }
+    if (args[i] == '--config' && i + 1 < args.length) {
+      configPath = args[++i];
       continue;
     }
     if (args[i] == '--phobe') {
@@ -39,7 +44,7 @@ void main(List<String> args) async {
     positional.add(args[i]);
   }
 
-  final config = AppConfig.load(promptFile: promptFile);
+  final config = AppConfig.load(promptFile: promptFile, configPath: configPath);
 
   // One-shot mode: positional arg is the prompt string
   // e.g.  dart run -- "what's 2+2?"   or   ./utopic "refactor this"

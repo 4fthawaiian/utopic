@@ -1,6 +1,6 @@
 name: utopic
 description: A TUI AI Agent with opencode Zen models and ACP support
-version: 1.0.0
+version: 1.1.0
 
 environment:
   sdk: ^3.12.1

@@ -29,8 +29,10 @@ class AppConfig {
     );
   }
 
-  factory AppConfig.load({String? promptFile}) {
-    final configPaths = [
+  factory AppConfig.load({String? promptFile, String? configPath}) {
+    final configPaths = <File>[
+      if (configPath != null && configPath.isNotEmpty)
+        File(configPath),
       if (Platform.environment['UTOPIC_CONFIG']?.isNotEmpty == true)
         File(Platform.environment['UTOPIC_CONFIG']!),
       File(path.join(Directory.current.path, 'utopic.yaml')),

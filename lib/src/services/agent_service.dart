@@ -284,7 +284,7 @@ class AgentService implements AcpAgentDelegate {
         content: '⚠️ Error: $e',
       ));
       _notifyUpdates();
-      return null;
+      rethrow;
     }
   }
 
@@ -721,10 +721,7 @@ class AgentService implements AcpAgentDelegate {
         'outputTokens': result.outputTokens,
       };
     } else {
-      return {
-        'inputTokens': 0,
-        'outputTokens': 0,
-      };
+      throw Exception('Agent completed without producing a result');
     }
   }
 
