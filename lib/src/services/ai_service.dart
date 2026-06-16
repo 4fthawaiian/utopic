@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -149,15 +150,17 @@ class ZenAiService extends AiService {
       ...?extraParams,
     };
 
-    final response = await _client.post(
-      Uri.parse('${config.zenEndpoint}/v1/responses'),
-      headers: {
-        'Content-Type': 'application/json',
-        if (config.opencodeApiKey != null)
-          'Authorization': 'Bearer ${config.opencodeApiKey}',
-      },
-      body: jsonEncode(body),
-    );
+    final response = await _client
+        .post(
+          Uri.parse('${config.zenEndpoint}/v1/responses'),
+          headers: {
+            'Content-Type': 'application/json',
+            if (config.opencodeApiKey != null)
+              'Authorization': 'Bearer ${config.opencodeApiKey}',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 120));
 
     final duration = DateTime.now().difference(startTime);
 

@@ -1,3 +1,20 @@
+## 1.1.1
+
+- **Fix ACP stdio tool-call reply never returned** — three issues fixed:
+  - **HTTP timeout**: `ZenAiService.complete()` now has a 120-second timeout
+    on the Zen API POST call, preventing the agent loop from hanging
+    indefinitely after tool execution when the AI context is large.
+    (`ai_service.dart`)
+  - **Preserve AI reasoning before tool calls**: When the AI returns both
+    reasoning text and tool calls, the text is now kept in the conversation
+    history instead of being discarded with `content: ''`.
+    (`agent_service.dart`)
+  - **Fallback text for empty AI responses**: If the AI returns no text after
+    tool execution, a fallback message is sent so the ACP client (Paseo)
+    still receives a visible reply. Errors sending `session/update`
+    notifications are now logged to stderr instead of silently swallowed.
+    (`agent_service.dart`)
+
 ## 1.0.0
 
 - Initial version.

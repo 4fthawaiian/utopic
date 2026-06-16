@@ -240,9 +240,11 @@ class AgentService implements AcpAgentDelegate {
 
         if (result.hasToolCalls) {
           // Add assistant message with tool calls to conversation
+          // Preserve any text the AI returned alongside the tool calls
+          // (reasoning, commentary before calling tools).
           conv.addMessage(Message(
             role: 'assistant',
-            content: '',
+            content: result.content,
             toolCalls: result.toolCalls.map((tc) => {
               'id': tc.id,
               'name': tc.name,
@@ -758,16 +760,29 @@ class AgentService implements AcpAgentDelegate {
     }
 
     if (result != null) {
+      // If the AI returned empty content after tool calls, use a fallback
+      // so the client (Paseo) still sees the conversation was handled.
+      final replyText = result.content.isNotEmpty
+          ? result.content
+          : '(no text response — tool execution completed)';
+
+      if (result.content.isEmpty) {
+        stderr.writeln('ACP: AI returned empty content after prompt (tokens: '
+            'input=${result.inputTokens}, output=${result.outputTokens})');
+      }
+
       // Stream the full response as a session/update notification
       // so the client (Paseo) can display the reply.
       try {
         await connection.sessionUpdate(SessionNotification(
           sessionId: sessionId,
           update: AgentMessageChunkSessionUpdate(
-            content: TextContentBlock(text: result.content),
+            content: TextContentBlock(text: replyText),
           ),
         ));
-      } catch (_) {}
+      } catch (e) {
+        stderr.writeln('ACP: Failed to send sessionUpdate notification: $e');
+      }
       return {
         'inputTokens': result.inputTokens,
         'outputTokens': result.outputTokens,
