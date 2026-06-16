@@ -4,6 +4,9 @@
 
 ## 1.1.0
 
+- **Session persistence** — conversations auto-save to
+  `~/.config/utopic/sessions/<id>.json`. Resume with `/load <id>` or
+  `--load <id>` on the CLI. Exit message shows the session ID for rejoining.
 - **Fix ACP error propagation** — Zen API errors (e.g. 429 rate limit) are now
   returned to the ACP client as JSON-RPC error responses instead of being
   silently swallowed with an empty success. (`agent_service.dart`)

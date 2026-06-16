@@ -61,7 +61,9 @@ dart run -- "what's in this directory?"
 | `/acp-connect <host> <port>` or `/acp-connect cli:<cmd>` | Connect to ACP provider (TCP or local CLI) |
 | `/acp-connection` | Same as above (alias) |
 | `/acp-disconnect` | Disconnect from ACP provider |
-| `/list` | List conversations |
+| `/save` | Save current conversation |
+| `/load <id>` | Load a saved conversation (bare `/load` lists saved) |
+| `/list` | List conversations (💾 = saved) |
 | `/switch <n>` | Switch conversation |
 | `/config` | Show current configuration |
 | `/phobe` | Toggle pride theming on/off |
@@ -90,6 +92,33 @@ Skills are loaded progressively per spec:
 
 Pre-installed skills:
 - **git-expert** — git version control workflows (commit, branch, merge, rebase, etc.)
+
+## Sessions
+
+Conversations are **auto-saved** to `~/.config/utopic/sessions/<id>.json` after
+every exchange. On startup, utopic resumes your most recent session.
+
+**Commands:**
+
+| Command | Action |
+|---|---|
+| `/save` | Save the current conversation now |
+| `/load` | List all saved sessions with IDs |
+| `/load <id>` | Load and switch to a saved session |
+
+**Resume from the CLI:**
+
+```bash
+./utopic --load conv_1781591223779_69697
+```
+
+The session ID is shown in the exit message so you can copy it for later.
+Sessions are stored as plain JSON — peek at them anytime:
+
+```bash
+ls ~/.config/utopic/sessions/
+cat ~/.config/utopic/sessions/conv_*.json | head -20
+```
 
 ## System prompt
 
@@ -227,8 +256,9 @@ Config is loaded from (in priority order):
 ./utopic --help
 ./utopic --prompt my-prompt.md     # inject a prompt file
 ./utopic --phobe                   # launch without pride theming
-./utopic --config path/to/yaml     # use a specific config file
-./utopic "write a go routine"      # one-shot (print response, exit)
+./utopic --config path/to/yaml       # use a specific config file
+./utopic --load conv_xxx...          # resume a saved session
+./utopic "write a go routine"        # one-shot (print response, exit)
 ```
 
 ## Project structure
