@@ -1,10 +1,10 @@
 # utopic
 
 A queer-coded TUI AI coding agent built with [utopia_tui](https://pub.dev/packages/utopia_tui)
-supporting **OpenCode Zen models**, **Agent Skills** (agentskills.io), and
-the **Agent Client Protocol (ACP)**.
+supporting **OpenCode Zen models**, **Agent Skills** (agentskills.io),
+the **Agent Client Protocol (ACP)**, and **Paseo**.
 
-🏳️‍🌈✨ *Your fabulously queer coding companion in the terminal.*
+🏳️‍🌈✨ *Your fabulously queer coding companion in the terminal. Built with Paseo, works great with Paseo.*
 
 ## Features
 
