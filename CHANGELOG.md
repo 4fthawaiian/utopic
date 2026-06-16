@@ -1,5 +1,11 @@
 ## 1.1.1
 
+- **Fix always resumes oldest session on startup** — `initialize()` was setting
+  `_activeConv = _conversations.first`, which was always the oldest saved
+  session. Now a fresh conversation is created as the active one; saved
+  sessions remain accessible via `/list` and `/switch`. Use `--load <id>`
+  to explicitly resume a past session. (`agent_service.dart`)
+
 - **Fix ACP stdio tool-call reply never returned** — three issues fixed:
   - **HTTP timeout**: `ZenAiService.complete()` now has a 120-second timeout
     on the Zen API POST call, preventing the agent loop from hanging

@@ -138,7 +138,7 @@ class AgentService implements AcpAgentDelegate {
 
     final sysPrompt = buildSystemPrompt();
 
-    // Load saved sessions from disk
+    // Load saved sessions from disk (for /list and /switch access)
     final savedSessions = _sessionStore.list();
     for (final s in savedSessions) {
       final conv = _sessionStore.load(s['id'] as String);
@@ -147,33 +147,31 @@ class AgentService implements AcpAgentDelegate {
       }
     }
 
-    // If no saved sessions, create a default conversation
-    if (_conversations.isEmpty) {
-      final defaultConv = Conversation(
-        title: 'Welcome to Utopic Agent',
-      );
-      defaultConv.addMessage(Message(
-        role: 'system',
-        content: sysPrompt,
-      ));
-      defaultConv.addMessage(Message(
-        role: 'assistant',
-        content: '🏳️\u200d🌈 Heya! I\'m **Utopic**, your fabulously queer coding agent! ✨\n\n'
-            'I can help you with:\n'
-            '  ✦ **Code** — Write, review, and debug like a superstar\n'
-            '  ✦ **Files** — Read, edit, and create files with flair\n'
-            '  ✦ **Commands** — Run terminal commands, I won\'t judge your bash history\n'
-            '  ✦ **Skills** — Tap into expert knowledge (git, docker, whatever you need)\n\n'
-            'Type your request below or type `/help` for available commands.\n'
-            'Let\'s build something marvelous together! 💖\n',
-      ));
-      _conversations.add(defaultConv);
-    }
+    // Always start with a fresh conversation so the user sees a clean slate.
+    // Saved sessions are still available via /list and /switch.
+    final freshConv = Conversation(
+      title: 'Welcome to Utopic Agent',
+    );
+    freshConv.addMessage(Message(
+      role: 'system',
+      content: sysPrompt,
+    ));
+    freshConv.addMessage(Message(
+      role: 'assistant',
+      content: '🏳️\u200d🌈 Heya! I\'m **Utopic**, your fabulously queer coding agent! ✨\n\n'
+          'I can help you with:\n'
+          '  ✦ **Code** — Write, review, and debug like a superstar\n'
+          '  ✦ **Files** — Read, edit, and create files with flair\n'
+          '  ✦ **Commands** — Run terminal commands, I won\'t judge your bash history\n'
+          '  ✦ **Skills** — Tap into expert knowledge (git, docker, whatever you need)\n\n'
+          'Type your request below or type `/help` for available commands.\n'
+          'Let\'s build something marvelous together! 💖\n',
+    ));
+    _conversations.add(freshConv);
 
-    final resumeConv = _conversations.first;
-    _activeConv = resumeConv;
+    _activeConv = freshConv;
     _conversationsController.add(List.from(_conversations));
-    _activeConversationController.add(resumeConv);
+    _activeConversationController.add(freshConv);
   }
 
   /// Available tools the agent can use.
