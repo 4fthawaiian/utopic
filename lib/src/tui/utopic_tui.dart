@@ -597,11 +597,7 @@ class UtopicTuiApp extends TuiApp {
 
     final model = _agent.ai.currentModel;
     stdout.writeln();
-    if (conv.title != 'Welcome to Utopic Agent') {
-      stdout.writeln('🏳️\u200d🌈  catch u later bestie!  (${conv.title} · $model)');
-    } else {
-      stdout.writeln('🏳️\u200d🌈  catch u later bestie!  ($model)');
-    }
+    stdout.writeln('🏳️\u200d🌈  catch u later bestie!  ✨ $model');
     stdout.writeln();
   }
 }
