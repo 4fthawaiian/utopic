@@ -26,6 +26,27 @@ class Message {
     return 'msg_${base64Encode(bytes).replaceAll(RegExp(r'[/+=]'), '')}';
   }
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'role': role,
+        'content': content,
+        'timestamp': timestamp.toIso8601String(),
+        if (toolCallId != null) 'toolCallId': toolCallId,
+        if (toolCalls != null) 'toolCalls': toolCalls,
+      };
+
+  factory Message.fromJson(Map<String, dynamic> json) => Message(
+        id: json['id'] as String?,
+        role: json['role'] as String,
+        content: json['content'] as String? ?? '',
+        timestamp: json['timestamp'] != null
+            ? DateTime.parse(json['timestamp'] as String)
+            : null,
+        toolCallId: json['toolCallId'] as String?,
+        toolCalls: (json['toolCalls'] as List?)
+            ?.cast<Map<String, dynamic>>(),
+      );
+
   @override
   String toString() => '[$role] $content';
 }
@@ -63,4 +84,31 @@ class Conversation {
   }
 
   int get messageCount => messages.length;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'systemPromptOverride': systemPromptOverride,
+        'messages': messages.map((m) => m.toJson()).toList(),
+      };
+
+  factory Conversation.fromJson(Map<String, dynamic> json) {
+    final conv = Conversation(
+      id: json['id'] as String?,
+      title: json['title'] as String? ?? 'New Conversation',
+      messages: (json['messages'] as List? ?? [])
+          .map((m) => Message.fromJson(m as Map<String, dynamic>))
+          .toList(),
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'] as String)
+          : null,
+      updatedAt: json['updatedAt'] != null
+          ? DateTime.parse(json['updatedAt'] as String)
+          : null,
+      systemPromptOverride: json['systemPromptOverride'] as String?,
+    );
+    return conv;
+  }
 }

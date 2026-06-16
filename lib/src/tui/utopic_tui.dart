@@ -26,6 +26,7 @@ class UtopicTuiApp extends TuiApp {
   bool _phobeMode = false;
   int _selIndex = 0;
   int _spinnerFrame = 0;
+  final String? _loadSessionId;
 
   /// Models available for selection — ACP remote models if connected,
   /// otherwise the built-in Zen models.
@@ -43,24 +44,35 @@ class UtopicTuiApp extends TuiApp {
   @override
   Duration? get tickInterval => const Duration(milliseconds: 166);
 
-  UtopicTuiApp({required this.config, this._phobeMode = false});
+  UtopicTuiApp({required this.config, this._phobeMode = false, this._loadSessionId});
 
   @override
   void init(TuiContext context) {
     _agent = AgentService(config: config);
     
-    // initialize() runs synchronously (no await inside it).
-    // Catch both sync and async errors.
+    // initialize() is async; chain the session load after it.
     try {
-      _agent.initialize().catchError((e) {
+      _agent.initialize().then((_) {
+        // Load a specific session if --load was given
+        final loadId = _loadSessionId;
+        if (loadId != null) {
+          _agent.loadSession(loadId).then((conv) {
+            if (conv != null) {
+              _status = 'Loaded: ${conv.title}  ·  ${_agent.ai.currentModel}';
+            } else {
+              _status = 'Session not found: $loadId';
+            }
+            _refreshChat(context);
+          });
+        }
+        _status = 'Ready  ·  ${_agent.ai.currentModel}  ·  /help';
+        _refreshChat(context);
+      }).catchError((e) {
         _status = 'Init error: $e';
       });
-      _status = 'Ready  ·  ${_agent.ai.currentModel}  ·  /help';
     } catch (e) {
       _status = 'Init error: $e';
     }
-
-    _refreshChat(context);
 
     _agent.conversationsStream.listen((_) => _refreshChat(context));
     _agent.activeConversationStream.listen((_) => _refreshChat(context));
@@ -188,6 +200,8 @@ class UtopicTuiApp extends TuiApp {
           '    /acp-connect <host> <port>  Connect to remote ACP server as provider',
           '    /acp-connect cli:<cmd>      Spawn local CLI as ACP provider',
           '    /acp-disconnect  Disconnect from remote ACP provider',
+          '    /save         Save current conversation',
+          '    /load <id>    Load a saved conversation',
           '    /list         List conversations',
           '    /switch <n>   Switch conversation',
           '    /phobe        Toggle phobe mode (remove pride theming)',
@@ -299,23 +313,57 @@ class UtopicTuiApp extends TuiApp {
         for (int i = 0; i < _agent.conversations.length; i++) {
           final conv = _agent.conversations[i];
           final active = conv == _agent.activeConversation ? ' ◀' : '';
-          lines.add('   ${i + 1}. ${conv.title}$active');
+          final saved = _agent.listSavedSessions().any((s) => s['id'] == conv.id)
+              ? ' 💾'
+              : '';
+          lines.add('   ${i + 1}. ${conv.title}$active$saved');
+          // Show session ID for saved convos
+          if (conv.id.startsWith('conv_')) {
+            lines.add('      ${conv.id}');
+          }
         }
         lines.add('');
-        lines.add('   /switch <n> to switch');
+        lines.add('   /switch <n> to switch  ·  /load <id> to load saved');
         _scroll.setLines(lines);
         _scroll.scrollTop();
         return;
 
-      case 'switch':
+      case 'save':
+        _agent.saveCurrentSession().then((_) {
+          _status = '✅ Saved (${_agent.activeConversation?.id})';
+        }).catchError((e) {
+          _status = 'Save failed: $e';
+        });
+        return;
+
+      case 'load':
         if (parts.length > 1) {
-          final i = int.tryParse(parts[1]);
-          if (i != null && i > 0 && i <= _agent.conversations.length) {
-            _agent.switchConversation(_agent.conversations[i - 1]);
-            _status = 'Switched: ${_agent.conversations[i - 1].title}';
-            _refreshChat(context);
+          _agent.loadSession(parts[1]).then((conv) {
+            if (conv != null) {
+              _status = 'Loaded: ${conv.title}';
+              _refreshChat(context);
+            } else {
+              _status = 'Session not found: ${parts[1]}';
+            }
+          }).catchError((e) {
+            _status = 'Load failed: $e';
+          });
+        } else {
+          // Show list of saved sessions
+          final saved = _agent.listSavedSessions();
+          if (saved.isEmpty) {
+            _status = 'No saved sessions. Use /save first.';
           } else {
-            _status = 'Invalid index. Try /list';
+            final lines = <String>['', ' Saved Sessions:', ''];
+            for (final s in saved) {
+              final active = s['id'] == _agent.activeConversation?.id ? ' ◀' : '';
+              lines.add('   ${s['id']}  ${s['title']}  (${s['messageCount']} msgs)$active');
+            }
+            lines.add('');
+            lines.add('   /load <id> to load one');
+            _scroll.setLines(lines);
+            _scroll.scrollTop();
+            _status = '${saved.length} saved sessions';
           }
         }
         return;
@@ -592,12 +640,18 @@ class UtopicTuiApp extends TuiApp {
 
   /// Print a summary of the current session to stdout before exiting.
   void printSessionSummary() {
+    _agent.saveCurrentSession();
+
     final conv = _agent.activeConversation;
     if (conv == null) return;
 
     final model = _agent.ai.currentModel;
     stdout.writeln();
-    stdout.writeln('🏳️\u200d🌈  catch u later bestie!  ✨ $model');
+    stdout.writeln('🏳️\u200d🌈  catch u later bestie!');
+    if (conv.id.startsWith('conv_')) {
+      stdout.writeln('   utopic --load ${conv.id}  to continue');
+    }
+    stdout.writeln('   model: $model');
     stdout.writeln();
   }
 }

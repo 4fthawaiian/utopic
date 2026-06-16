@@ -8,6 +8,7 @@ import '../models/conversation.dart';
 import '../models/zen_models.dart';
 import '../acp/acp.dart';
 import 'ai_service.dart';
+import 'session_store.dart';
 import 'skills.dart';
 import 'tools/tools.dart';
 
@@ -19,6 +20,7 @@ class AgentService implements AcpAgentDelegate {
   AcpServer? _acpServer;
   AcpDartConnection? _acpConnection;
   ZenAiService? _zenFallback;
+  final SessionStore _sessionStore = SessionStore();
   String? _cwd;
   bool _cancelRequested = false;
 
@@ -136,29 +138,42 @@ class AgentService implements AcpAgentDelegate {
 
     final sysPrompt = buildSystemPrompt();
 
-    // Create default conversation
-    final defaultConv = Conversation(
-      title: 'Welcome to Utopic Agent',
-    );
-    defaultConv.addMessage(Message(
-      role: 'system',
-      content: sysPrompt,
-    ));
-    defaultConv.addMessage(Message(
-      role: 'assistant',
-      content: '🏳️\u200d🌈 Heya! I\'m **Utopic**, your fabulously queer coding agent! ✨\n\n'
-          'I can help you with:\n'
-          '  ✦ **Code** — Write, review, and debug like a superstar\n'
-          '  ✦ **Files** — Read, edit, and create files with flair\n'
-          '  ✦ **Commands** — Run terminal commands, I won\'t judge your bash history\n'
-          '  ✦ **Skills** — Tap into expert knowledge (git, docker, whatever you need)\n\n'
-          'Type your request below or type `/help` for available commands.\n'
-          'Let\'s build something marvelous together! 💖\n',
-    ));
-    _conversations.add(defaultConv);
-    _activeConv = defaultConv;
+    // Load saved sessions from disk
+    final savedSessions = _sessionStore.list();
+    for (final s in savedSessions) {
+      final conv = _sessionStore.load(s['id'] as String);
+      if (conv != null) {
+        _conversations.add(conv);
+      }
+    }
+
+    // If no saved sessions, create a default conversation
+    if (_conversations.isEmpty) {
+      final defaultConv = Conversation(
+        title: 'Welcome to Utopic Agent',
+      );
+      defaultConv.addMessage(Message(
+        role: 'system',
+        content: sysPrompt,
+      ));
+      defaultConv.addMessage(Message(
+        role: 'assistant',
+        content: '🏳️\u200d🌈 Heya! I\'m **Utopic**, your fabulously queer coding agent! ✨\n\n'
+            'I can help you with:\n'
+            '  ✦ **Code** — Write, review, and debug like a superstar\n'
+            '  ✦ **Files** — Read, edit, and create files with flair\n'
+            '  ✦ **Commands** — Run terminal commands, I won\'t judge your bash history\n'
+            '  ✦ **Skills** — Tap into expert knowledge (git, docker, whatever you need)\n\n'
+            'Type your request below or type `/help` for available commands.\n'
+            'Let\'s build something marvelous together! 💖\n',
+      ));
+      _conversations.add(defaultConv);
+    }
+
+    final resumeConv = _conversations.first;
+    _activeConv = resumeConv;
     _conversationsController.add(List.from(_conversations));
-    _activeConversationController.add(defaultConv);
+    _activeConversationController.add(resumeConv);
   }
 
   /// Available tools the agent can use.
@@ -343,6 +358,9 @@ class AgentService implements AcpAgentDelegate {
           ? '${content.substring(0, 40)}...'
           : content;
     }
+
+    // Auto-save after each exchange
+    await saveCurrentSession();
   }
 
   /// Stream AI response for real-time display
@@ -642,6 +660,40 @@ class AgentService implements AcpAgentDelegate {
     _acpServer = null;
     _notifyUpdates();
   }
+
+  // ─── Session persistence ────────────────────────────────────────────
+
+  /// Save the active conversation to disk.
+  Future<void> saveCurrentSession() async {
+    if (_activeConv == null) return;
+    if (_activeConv!.messageCount <= 1) return; // don't save empty convos
+    try {
+      _sessionStore.save(_activeConv!);
+    } catch (_) {
+      // Silently fail — persistence is best-effort
+    }
+  }
+
+  /// Load a saved conversation by ID and switch to it.
+  Future<Conversation?> loadSession(String id) async {
+    final conv = _sessionStore.load(id);
+    if (conv == null) return null;
+
+    // Replace or add
+    final idx = _conversations.indexWhere((c) => c.id == id);
+    if (idx >= 0) {
+      _conversations[idx] = conv;
+    } else {
+      _conversations.add(conv);
+    }
+    _activeConv = conv;
+    _notifyUpdates();
+    _activeConversationController.add(conv);
+    return conv;
+  }
+
+  /// List all saved sessions (metadata only).
+  List<Map<String, dynamic>> listSavedSessions() => _sessionStore.list();
 
   // ─── AcpAgentDelegate implementation ─────────────────────────────────
 

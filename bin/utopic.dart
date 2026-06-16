@@ -9,6 +9,7 @@ import 'package:utopic/src/vendor/runner.dart';
 void main(List<String> args) async {
   String? promptFile;
   String? configPath;
+  String? loadSessionId;
   var phobeMode = false;
   final positional = <String>[];
 
@@ -23,6 +24,10 @@ void main(List<String> args) async {
     }
     if (args[i] == '--config' && i + 1 < args.length) {
       configPath = args[++i];
+      continue;
+    }
+    if (args[i] == '--load' && i + 1 < args.length) {
+      loadSessionId = args[++i];
       continue;
     }
     if (args[i] == '--phobe') {
@@ -64,7 +69,11 @@ void main(List<String> args) async {
   }
 
   // Interactive TUI mode
-  final app = UtopicTuiApp(config: config, phobeMode: phobeMode);
+  final app = UtopicTuiApp(
+    config: config,
+    phobeMode: phobeMode,
+    loadSessionId: loadSessionId,
+  );
   final runner = UtopicRunner(app)
     ..onBeforeExit = () => app.printSessionSummary();
   await runner.run().catchError((e) {
@@ -238,6 +247,7 @@ USAGE:
 OPTIONS:
   --config <path>  Path to config file
   --prompt <path>  Path to a prompt file (appended to system prompt)
+  --load <id>      Resume a saved session by ID (see /save + exit message)
   --phobe          Launch in boring mode (no pride theming)
   --acp-server     Run in daemon mode (headless ACP server over TCP, no TUI)
   --acp-stdio      Run in daemon mode (headless ACP server over stdin/stdout)
