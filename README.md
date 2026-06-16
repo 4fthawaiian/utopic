@@ -2,7 +2,7 @@
 
 A queer-coded TUI AI coding agent built with [utopia_tui](https://pub.dev/packages/utopia_tui)
 supporting **OpenCode Zen models**, **Agent Skills** (agentskills.io),
-the **Agent Client Protocol (ACP)**, and **Paseo**.
+the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 
 🏳️‍🌈✨ *Your fabulously queer coding companion in the terminal. Built with Paseo, works great with Paseo.*
 
