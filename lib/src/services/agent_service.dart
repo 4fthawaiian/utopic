@@ -384,6 +384,7 @@ class AgentService implements AcpAgentDelegate {
               '`/models` - List available models\n'
               '`/prompt <text>` - Set per-conversation system prompt\n'
               '`/quit` - Exit the agent\n'
+              '`/phobe` - Toggle phobe mode (remove pride theming)'
               '`/config` - Show current configuration',
         );
         _activeConv!.addMessage(msg);
@@ -513,6 +514,17 @@ class AgentService implements AcpAgentDelegate {
               '- AGENTS.md (cwd): ${File(path.join(_cwd ?? ".", "AGENTS.md")).existsSync() ? "✅ found" : "(not found)"}\n'
               '- AGENTS.md (global ~/.config/utopic/): ${File(path.join(Platform.environment['HOME'] ?? '', '.config', 'utopic', 'AGENTS.md')).existsSync() ? "✅ found" : "(not found)"}\n'
               '- Prompt override: ${_activeConv?.systemPromptOverride != null ? "✅ set" : "(none)"}',
+        ));
+        break;
+
+      case '/phobe':
+        // Phobe mode is handled by the TUI, but if the message reaches
+        // the agent (e.g. programmatic input), acknowledge it.
+        _activeConv!.addMessage(Message(
+          role: 'assistant',
+          content: '⚠️ Phobe mode can only be toggled from inside the TUI '
+              'with the `/phobe` command or at startup with `--phobe`.'
+              'The TUI is not available in this mode.',
         ));
         break;
 
