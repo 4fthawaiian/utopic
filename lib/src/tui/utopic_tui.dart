@@ -49,6 +49,7 @@ class UtopicTuiApp extends TuiApp {
   @override
   void init(TuiContext context) {
     _agent = AgentService(config: config);
+    _agent.phobeMode = _phobeMode;
     
     // initialize() is async; chain the session load after it.
     try {
@@ -369,9 +370,16 @@ class UtopicTuiApp extends TuiApp {
         return;
 
       case 'phobe':
-        _phobeMode = !_phobeMode;
-        _status = _phobeMode ? 'Phobe mode ON' : 'Phobe mode OFF';
-        _refreshChat(context);
+        try {
+          _phobeMode = !_phobeMode;
+          _agent.phobeMode = _phobeMode;
+          _status = _phobeMode
+              ? 'Phobe mode: colors off  (start with --phobe to skip the queer welcome)'
+              : '🌈 Pride mode: full queer energy!';
+          _refreshChat(context);
+        } catch (e) {
+          _status = 'Error toggling phobe mode: $e';
+        }
         return;
 
       default:
@@ -457,13 +465,13 @@ class UtopicTuiApp extends TuiApp {
 
     // Status bar (row 0)
     String displayStatus;
-    if (_isProcessing && !_phobeMode) {
+    if (_isProcessing && _phobeMode) {
+      displayStatus = ' thinking';
+    } else if (_isProcessing) {
       const spinners = ['🌈', '✨', '💖', '🏳️\u200d🌈'];
       final s = spinners[_spinnerFrame % spinners.length];
       final dots = List.filled((_spinnerFrame ~/ 4) % 4, '.').join('');
       displayStatus = ' $s thinkin$dots';
-    } else if (_isProcessing) {
-      displayStatus = ' thinking';
     } else {
       displayStatus = ' $_status';
     }
@@ -537,7 +545,7 @@ class UtopicTuiApp extends TuiApp {
     final hint = _selectingModel
         ? ' ↑/↓=select  Enter=confirm  Esc=cancel'
         : (_phobeMode
-            ? ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel'
+            ? ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  — phobe mode'
             : ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  ✦ fabulously queer');
     TuiBackground(
       style: TuiStyle(

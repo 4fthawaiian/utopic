@@ -1,5 +1,16 @@
 ## 1.1.1
 
+- **Fix /phobe freeze + make --phobe actually remove pride content**
+  - `/phobe` no longer freezes — handler now wrapped in try-catch
+  - `--phobe` now changes the welcome message to a non-queer version
+    instead of just toggling colors. The pride welcome is replaced with
+    a neutral one: "Utopic here. Let's write some code."
+  - `AgentService` gains a `phobeMode` field; the TUI sets it before
+    `initialize()` so the welcome message respects the flag.
+  - Phobe mode spinner shows plain "thinking" instead of rainbow emojis
+  - Hint bar shows "— phobe mode" instead of "✦ fabulously queer"
+  (`agent_service.dart`, `utopic_tui.dart`)
+
 - **Fix always resumes oldest session on startup** — `initialize()` was setting
   `_activeConv = _conversations.first`, which was always the oldest saved
   session. Now a fresh conversation is created as the active one; saved

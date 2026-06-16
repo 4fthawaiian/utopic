@@ -128,6 +128,10 @@ class AgentService implements AcpAgentDelegate {
     return parts.join('\n');
   }
 
+  /// Whether phobe mode is enabled (remove pride theming).
+  /// Set before [initialize] to control the welcome message.
+  bool phobeMode = false;
+
   /// Initialize the agent service
   Future<void> initialize() async {
     _cwd = Directory.current.path;
@@ -156,17 +160,30 @@ class AgentService implements AcpAgentDelegate {
       role: 'system',
       content: sysPrompt,
     ));
-    freshConv.addMessage(Message(
-      role: 'assistant',
-      content: '🏳️\u200d🌈 Heya! I\'m **Utopic**, your fabulously queer coding agent! ✨\n\n'
-          'I can help you with:\n'
-          '  ✦ **Code** — Write, review, and debug like a superstar\n'
-          '  ✦ **Files** — Read, edit, and create files with flair\n'
-          '  ✦ **Commands** — Run terminal commands, I won\'t judge your bash history\n'
-          '  ✦ **Skills** — Tap into expert knowledge (git, docker, whatever you need)\n\n'
-          'Type your request below or type `/help` for available commands.\n'
-          'Let\'s build something marvelous together! 💖\n',
-    ));
+    if (phobeMode) {
+      freshConv.addMessage(Message(
+        role: 'assistant',
+        content: '**Utopic** here. Let\'s write some code.\n\n'
+            'I can help you with:\n'
+            '  - **Code** — Write, review, and debug\n'
+            '  - **Files** — Read, edit, and create files\n'
+            '  - **Commands** — Run terminal commands\n'
+            '  - **Skills** — Tap into expert knowledge\n\n'
+            'Type your request or `/help` for commands.\n',
+      ));
+    } else {
+      freshConv.addMessage(Message(
+        role: 'assistant',
+        content: '🏳️\u200d🌈 Heya! I\'m **Utopic**, your fabulously queer coding agent! ✨\n\n'
+            'I can help you with:\n'
+            '  ✦ **Code** — Write, review, and debug like a superstar\n'
+            '  ✦ **Files** — Read, edit, and create files with flair\n'
+            '  ✦ **Commands** — Run terminal commands, I won\'t judge your bash history\n'
+            '  ✦ **Skills** — Tap into expert knowledge (git, docker, whatever you need)\n\n'
+            'Type your request below or type `/help` for available commands.\n'
+            'Let\'s build something marvelous together! 💖\n',
+      ));
+    }
     _conversations.add(freshConv);
 
     _activeConv = freshConv;
