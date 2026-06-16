@@ -134,6 +134,7 @@ class UtopicTuiApp extends TuiApp {
       _quitting = true;
       // Restore terminal before exit
       stdout.write('\x1b[0m\x1b[?25h\x1b[?1049l');
+      printSessionSummary();
       exit(0);
     }
 
@@ -587,5 +588,23 @@ class UtopicTuiApp extends TuiApp {
       default:
         break;
     }
+  }
+
+  /// Print a summary of the current session to stdout before exiting.
+  void printSessionSummary() {
+    final conv = _agent.activeConversation;
+    if (conv == null) return;
+
+    final msgCount = conv.messageCount;
+    final model = _agent.ai.currentModel;
+    stdout.writeln();
+    stdout.writeln('━━━ Session ━━━');
+    stdout.writeln('  Model:     $model');
+    stdout.writeln('  Messages:  $msgCount');
+    if (conv.title != 'Welcome to Utopic Agent') {
+      stdout.writeln('  Title:     ${conv.title}');
+    }
+    stdout.writeln('━━━━━━━━━━━━━━');
+    stdout.writeln();
   }
 }

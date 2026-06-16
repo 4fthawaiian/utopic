@@ -65,7 +65,8 @@ void main(List<String> args) async {
 
   // Interactive TUI mode
   final app = UtopicTuiApp(config: config, phobeMode: phobeMode);
-  final runner = UtopicRunner(app);
+  final runner = UtopicRunner(app)
+    ..onBeforeExit = () => app.printSessionSummary();
   await runner.run().catchError((e) {
     stderr.writeln('Fatal error: $e');
     exit(1);

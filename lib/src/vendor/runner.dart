@@ -12,6 +12,10 @@ class UtopicRunner {
   final TuiApp app;
   final TuiTerminalInterface terminal;
 
+  /// Called before the process exits (Ctrl+D, /quit, etc.).
+  /// Use this to print session summaries, save state, etc.
+  void Function()? onBeforeExit;
+
   StreamSubscription? _tickSub;
   StreamSubscription? _resizeSub;
   StreamSubscription? _keySub;
@@ -28,6 +32,7 @@ class UtopicRunner {
   void stop() {
     if (!_stopped) {
       _stopped = true;
+      onBeforeExit?.call();
       _stopCompleter.complete();
     }
   }
@@ -67,6 +72,7 @@ class UtopicRunner {
               terminal.write('\x1b[0m');
               terminal.showCursor();
               terminal.write('\x1b[?1049l');
+              onBeforeExit?.call();
               exit(0);
             }
             try {
