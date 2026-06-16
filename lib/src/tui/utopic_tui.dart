@@ -595,16 +595,13 @@ class UtopicTuiApp extends TuiApp {
     final conv = _agent.activeConversation;
     if (conv == null) return;
 
-    final msgCount = conv.messageCount;
     final model = _agent.ai.currentModel;
     stdout.writeln();
-    stdout.writeln('━━━ Session ━━━');
-    stdout.writeln('  Model:     $model');
-    stdout.writeln('  Messages:  $msgCount');
     if (conv.title != 'Welcome to Utopic Agent') {
-      stdout.writeln('  Title:     ${conv.title}');
+      stdout.writeln('🏳️\u200d🌈  catch u later bestie!  (${conv.title} · $model)');
+    } else {
+      stdout.writeln('🏳️\u200d🌈  catch u later bestie!  ($model)');
     }
-    stdout.writeln('━━━━━━━━━━━━━━');
     stdout.writeln();
   }
 }
