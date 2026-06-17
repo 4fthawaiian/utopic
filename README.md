@@ -23,8 +23,10 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 
 ```bash
 export OPENCODE_API_KEY="sk-..."
-dart run           # or ./utopic
+dart run           # run from source
 ```
+
+Or build once with `dart compile exe bin/utopic.dart -o utopic` and use `./utopic` for all subsequent runs.
 
 ## One-shot mode
 
@@ -124,13 +126,14 @@ cat ~/.config/utopic/sessions/conv_*.json | head -20
 
 ## System prompt
 
-Built from up to **5 sources**, merged in order:
+Built from up to **5 sources** — sources 1–4 are **merged (concatenated)** in order,
+while source 5 acts as a **complete override** that replaces everything above:
 
 1. **Default or YAML** — hardcoded prompt with queer energy, or `system_prompt` in `utopic.yaml`
-2. **`AGENTS.md` / `AGENT.md`** — auto-detected in the current directory (first match wins)
-3. **`~/.config/utopic/AGENTS.md`** — global fallback if no project AGENTS.md found
+2. **`AGENTS.md` / `AGENT.md`** (case-insensitive, e.g. `agents.md`) — auto-detected in the current directory (first match wins)
+3. **`~/.config/utopic/AGENTS.md`** (or `AGENT.md`, case-insensitive) — global fallback if no project AGENTS.md found
 4. **`--prompt <file>`** — CLI flag to inject a prompt file
-5. **`/prompt <text>`** — per-conversation override (replaces all of the above)
+5. **`/prompt <text>`** — per-conversation override (**replaces** all of the above)
 
 ```
 # utopic.yaml
