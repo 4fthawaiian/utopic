@@ -10,6 +10,7 @@ import '../services/ai_service.dart';
 ///
 /// Simple non-modal interface:
 ///   Type your message, press Enter to send
+///   Alt+Enter to insert a newline (shows as ↵)
 ///   /command for actions
 ///   Arrow keys / PgUp/PgDn to scroll
 ///   Ctrl+D to quit  /  Ctrl+C to cancel
@@ -23,6 +24,7 @@ class UtopicTuiApp extends TuiApp {
   bool _quitting = false;
   bool _selectingModel = false;
   bool _isProcessing = false;
+  DateTime? _lastEscapeTime;
   bool _phobeMode = false;
   int _selIndex = 0;
   int _spinnerFrame = 0;
@@ -520,7 +522,7 @@ class UtopicTuiApp extends TuiApp {
     }
 
     // Input line (row h-2)
-    var display = _input;
+    var display = _input.replaceAll('\n', '\u21b5 ');
     final maxW = w - 4;
     if (display.length > maxW) {
       display = display.substring(display.length - maxW);
@@ -545,8 +547,8 @@ class UtopicTuiApp extends TuiApp {
     final hint = _selectingModel
         ? ' ↑/↓=select  Enter=confirm  Esc=cancel'
         : (_phobeMode
-            ? ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  — phobe mode'
-            : ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  ✦ fabulously queer');
+            ? ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  Alt+Enter=newline  — phobe mode'
+            : ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  Alt+Enter=newline  ✦ fabulously queer');
     TuiBackground(
       style: TuiStyle(
         bg: _phobeMode ? 236 : _prideColors[_msgCount % _prideColors.length],
@@ -593,55 +595,80 @@ class UtopicTuiApp extends TuiApp {
       if (ch.codeUnits.length == 1 && ch.codeUnitAt(0) < 32) return;
       _input = _input.substring(0, _cursor) + ch + _input.substring(_cursor);
       _cursor++;
+      _lastEscapeTime = null;
       return;
     }
 
     switch (event.code) {
       // Editing
+      case TuiKeyCode.escape:
+        // Pressing Esc alone starts the Alt+Enter window
+        _lastEscapeTime = DateTime.now();
+        return;
       case TuiKeyCode.backspace:
         if (_cursor > 0) {
           _input = _input.substring(0, _cursor - 1) + _input.substring(_cursor);
           _cursor--;
         }
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.delete:
         if (_cursor < _input.length) {
           _input = _input.substring(0, _cursor) + _input.substring(_cursor + 1);
         }
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.arrowLeft:
         if (_cursor > 0) _cursor--;
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.arrowRight:
         if (_cursor < _input.length) _cursor++;
+        _lastEscapeTime = null;
         return;
 
-      // Submit
+      // Submit or newline
       case TuiKeyCode.enter:
+        if (_lastEscapeTime != null &&
+            DateTime.now().difference(_lastEscapeTime!) < const Duration(milliseconds: 300)) {
+          // Alt+Enter — insert literal newline
+          _lastEscapeTime = null;
+          _input = '${_input.substring(0, _cursor)}\n${_input.substring(_cursor)}';
+          _cursor++;
+          return;
+        }
+        _lastEscapeTime = null;
         _submit(context);
         return;
 
       // Scrolling
       case TuiKeyCode.arrowUp:
         _scroll.scrollBy(-1, context.height - 4, context.width - 4);
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.arrowDown:
         _scroll.scrollBy(1, context.height - 4, context.width - 4);
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.pageUp:
         _scroll.scrollPage(context.height - 4, context.width - 4, false);
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.pageDown:
         _scroll.scrollPage(context.height - 4, context.width - 4);
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.home:
         _scroll.scrollTop();
+        _lastEscapeTime = null;
         return;
       case TuiKeyCode.end:
         _scroll.scrollBottom(context.height - 4, context.width - 4);
+        _lastEscapeTime = null;
         return;
 
       default:
+        _lastEscapeTime = null;
         break;
     }
   }
