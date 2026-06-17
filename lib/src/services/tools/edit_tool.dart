@@ -39,10 +39,10 @@ class EditTool extends Tool {
     if (p.isEmpty) return 'Error: path is required';
     if (oldText.isEmpty) return 'Error: oldText is required';
 
-    final file = File(path.normalize(p));
-    if (!file.existsSync()) return 'Error: file not found: $p';
-
     try {
+      final file = File(path.normalize(p));
+      if (!file.existsSync()) return 'Error: file not found: $p';
+
       String content;
       try {
         content = file.readAsStringSync();
