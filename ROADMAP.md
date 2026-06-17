@@ -52,12 +52,39 @@ which delegates to `AgentService` through `AcpAgentDelegate`.
 
 ---
 
+### Persistent Sessions — Save & Resume Conversations
+
+**Problem:** Conversations lived only in memory — exiting utopic meant losing
+everything. No way to save a session and come back to it later.
+
+**Solution:** Added session persistence with auto-save, manual save/load, and
+a `--load <id>` CLI flag. Sessions are serialized to JSON in
+`~/.config/utopic/sessions/<id>.json`.
+
+Commands:
+- `/save` — persist the current session
+- `/load <id>` — load a saved session
+- `/list` — list all conversations (shows 💾 for saved ones)
+- `--load <id>` — load on startup
+
+Each session gets a human-readable ID (`conv_<timestamp>`), with auto-save
+on exit and after each message. On startup, the most recent session resumes
+automatically.
+
+**Key commits:** `7eefb73`, `d97bbb3`, `db2b3e8`
+
+---
+
 ## Up Next
 
 ### 1. Readline-style input history
 
 **The problem:** Every prompt is typed fresh — there's no way to recall or edit
 a previous message.  Up-arrow should cycle through command history like bash/zsh.
+
+**Status:** Implemented on an unmerged branch (`00cab81`). Needs review and
+merge into `main`. Currently arrow keys are used for scroll navigation, so
+input history needs `Shift+↑` / `Shift+↓` or a dedicated keybinding.
 
 **Sketch:**
 
@@ -66,13 +93,13 @@ final _history = <String>[];
 int _historyIndex = -1;
 
 void _handleKey(TuiKeyEvent event) {
-  if (event.code == TuiKeyCode.arrowUp) {
+  if (event.code == TuiKeyCode.arrowUp && event.shift) {
     if (_historyIndex < _history.length - 1) {
       _historyIndex++;
       _input = _history[_history.length - 1 - _historyIndex];
       _cursor = _input.length;
     }
-  } else if (event.code == TuiKeyCode.arrowDown) {
+  } else if (event.code == TuiKeyCode.arrowDown && event.shift) {
     if (_historyIndex > 0) {
       _historyIndex--;
       _input = _history[_history.length - 1 - _historyIndex];
@@ -94,52 +121,35 @@ Store history in `~/.config/utopic/history` (one line per entry, max 1000).
 
 ---
 
-### 2. Persistent sessions — resume after exit
+### 2. Auto-compaction & `/compact`
 
-**The problem:** Conversations live only in memory.  When utopic exits, they're
-gone.  Need a way to save and reload sessions.
+**The problem:** Long conversations slow down the TUI. No automatic truncation
+of old messages.
 
-**Sketch:**
+**Status:** Implemented on an unmerged branch (`a319137`, `04ecd49`). Needs
+review and merge. Adds auto-compaction when conversation exceeds a threshold
+and a `/compact` manual command.
 
-Each session gets a human-readable ID built from two dictionary words:
+---
 
-```
-session/amber-walrus
-session/crimson-falcon
-```
+### 3. ACP auto-start on boot
 
-Or a UUID if preferred:
+**The problem:** The ACP server can't start automatically when utopic launches.
+You have to type `/acp` every time.
 
-```
-session/7f3a2b1c-9d4e-4f8a-a1b2-c3d4e5f6a7b8
-```
+**Status:** Implemented on an unmerged branch (`00cab81`). Reads
+`acp.enabled` from `utopic.yaml` and starts the server during
+`AgentService.initialize()`. Needs review and merge into `main`.
 
-Conversations are serialised to `~/.config/utopic/sessions/<id>.json`:
+---
 
-```json
-{
-  "id": "amber-walrus",
-  "title": "Refactor auth module",
-  "created": "2026-06-12T10:00:00Z",
-  "updated": "2026-06-12T10:30:00Z",
-  "cwd": "/home/user/project",
-  "model": "claude-sonnet-4",
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "refactor the auth module"},
-    {"role": "assistant", "content": "..."}
-  ]
-}
-```
+### 4. ACP server timeout fixes & String ID support
 
-On startup, load all session metadata (id + title + timestamps) into the
-conversation list.  The full message history is loaded lazily when the user
-switches to that session.
+**The problem:** ACP server connections can hang indefinitely, and session IDs
+must support string types per JSON-RPC 2.0 spec.
 
-Commands:
-- `/save` — persist the current session
-- `/load <id>` — load a saved session
-- Auto-save on exit and on each message.
+**Status:** Implemented on an unmerged branch (`f2fc5cc`, `52a4207`). Needs
+review and merge.
 
 ---
 

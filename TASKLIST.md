@@ -75,17 +75,27 @@ proper session management, and built-in model discovery.
 
 ---
 
-## 🧹 Other Improvements (from the same sprint)
+## 🧹 Other Improvements — Unmerged Branch ⚠️
 
-| Commit | Description |
-|---|---|
-| `63b4985` | Overhaul ACP client, fix AOT stdout bug, fix scroll/redraw, clean up |
-| `26de909` | Add AGENTS.md for agent context |
-| `00cab81` | Quick wins: input history, /clear, ACP auto-start, visible cursor |
-| `a319137` | Add auto-compaction for long conversations |
-| `04ecd49` | Add /compact command for manual compaction |
-| `f2fc5cc` | Fix ACP server timeout issues |
-| `52a4207` | Fix ACP id type to handle String IDs per JSON-RPC 2.0 spec |
+The commits below are **not on `main`** — they live on a dangling branch
+forked from `99f3397` and were never merged. They contain useful features
+(see [ROADMAP.md](./ROADMAP.md) → Up Next) but need review and a merge
+strategy before they can ship.
+
+| Commit | Description | Status |
+|---|---|---|
+| `63b4985` | Overhaul ACP client, fix AOT stdout bug, fix scroll/redraw, clean up | Unmerged |
+| `26de909` | Add AGENTS.md for agent context | Unmerged |
+| `00cab81` | Quick wins: input history, /clear, ACP auto-start, visible cursor | Unmerged |
+| `a319137` | Add auto-compaction for long conversations | Unmerged |
+| `04ecd49` | Add /compact command for manual compaction | Unmerged |
+| `f2fc5cc` | Fix ACP server timeout issues | Unmerged |
+| `52a4207` | Fix ACP id type to handle String IDs per JSON-RPC 2.0 spec | Unmerged |
+
+> **Why unmerged?** These were developed in a separate session and the branch
+> was never pushed or merged. The stash (`stash@{0}`) references the branch
+> tip. To resurrect: `git branch feature/quick-wins 52a4207` then rebase or
+> cherry-pick onto `main`.
 
 ---
 
