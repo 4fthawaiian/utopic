@@ -26,26 +26,26 @@ class ReadTool extends Tool {
     final p = args['path'] as String? ?? '';
     if (p.isEmpty) return 'Error: path is required';
 
-    final normalized = path.normalize(p);
-    final entity = FileSystemEntity.typeSync(normalized);
-
-    if (entity == FileSystemEntityType.notFound) {
-      return 'Error: not found: $p';
-    }
-
-    if (entity == FileSystemEntityType.directory) {
-      final dir = Directory(normalized);
-      final entries = dir.listSync().map((e) {
-        final name = path.basename(e.path);
-        final type = e is File ? 'file' : 'dir';
-        return '  $type\t$name';
-      }).toList();
-      return 'Directory: $p\n${entries.join('\n')}';
-    }
-
-    // Regular file
-    final file = File(normalized);
     try {
+      final normalized = path.normalize(p);
+      final entity = FileSystemEntity.typeSync(normalized);
+
+      if (entity == FileSystemEntityType.notFound) {
+        return 'Error: not found: $p';
+      }
+
+      if (entity == FileSystemEntityType.directory) {
+        final dir = Directory(normalized);
+        final entries = dir.listSync().map((e) {
+          final name = path.basename(e.path);
+          final type = e is File ? 'file' : 'dir';
+          return '  $type\t$name';
+        }).toList();
+        return 'Directory: $p\n${entries.join('\n')}';
+      }
+
+      // Regular file
+      final file = File(normalized);
       final content = file.readAsStringSync();
       final lines = content.split('\n');
       if (lines.length > 2000) {
