@@ -510,8 +510,15 @@ class UtopicTuiApp extends TuiApp {
       }
     }
 
-    // Chat panel (rows 1 to h-3)
-    final chatH = h - 4;
+    // Multi-line input area
+    const maxInputLines = 5;
+    final rawInputLineCount = _input.isEmpty
+        ? 1
+        : '\n'.allMatches(_input).length + 1;
+    final inputLineCount = rawInputLineCount.clamp(1, maxInputLines);
+
+    // Chat panel (rows 1 to h-2-inputLineCount)
+    final chatH = h - 3 - inputLineCount;
     if (chatH > 0) {
       TuiPanelBox(
         title: '',
@@ -521,27 +528,41 @@ class UtopicTuiApp extends TuiApp {
       ).paint(context, row: 1, col: 0, width: w, height: chatH);
     }
 
-    // Input line (row h-2)
-    var display = _input.replaceAll('\n', '\u21b5 ');
-    final maxW = w - 4;
-    if (display.length > maxW) {
-      display = display.substring(display.length - maxW);
-    }
-
-    // Prompt symbol
+    // Input area (rows h-1-inputLineCount to h-2)
+    final inputRow = h - 1 - inputLineCount;
     final promptColor = _phobeMode ? 244 : _prideColors[(_msgCount + 3) % _prideColors.length];
-    TuiBackground(
-      style: TuiStyle(bg: 235),
-      child: TuiRow(
-        children: [
-          TuiText('> ', style: TuiStyle(bold: true, fg: promptColor)),
-          TuiText(display),
-          if (_cursor >= display.length)
-            TuiText(' ', style: TuiStyle(bg: 255)), // cursor
-        ],
-        widths: [2, -1, 1],
-      ),
-    ).paint(context, row: h - 2, col: 0, width: w, height: 1);
+    final inputBg = TuiStyle(bg: 235);
+
+    // Draw input background and each line
+    var lineStart = 0;
+    for (var line = 0; line < inputLineCount; line++) {
+      // Find end of this line
+      final lineEnd = _input.indexOf('\n', lineStart);
+      final lineText = lineEnd == -1
+          ? _input.substring(lineStart)
+          : _input.substring(lineStart, lineEnd);
+
+      // Check if cursor is on this line
+      final isCursorLine =
+          lineStart <= _cursor &&
+          _cursor <= (lineEnd == -1 ? _input.length : lineEnd);
+      final cursorCol = isCursorLine ? _cursor - lineStart : -1;
+
+      TuiBackground(
+        style: inputBg,
+        child: TuiRow(
+          children: [
+            TuiText(line == 0 ? '> ' : '  ', style: TuiStyle(bold: true, fg: promptColor)),
+            TuiText(lineText),
+            if (cursorCol >= lineText.length)
+              TuiText(' ', style: TuiStyle(bg: 255)), // cursor
+          ],
+          widths: [2, -1, 1],
+        ),
+      ).paint(context, row: inputRow + line, col: 0, width: w, height: 1);
+
+      lineStart = lineEnd == -1 ? _input.length : lineEnd + 1;
+    }
 
     // Bottom hint bar (row h-1)
     final hint = _selectingModel
