@@ -9,6 +9,7 @@ class AppConfig {
   final AcpConfig acp;
   final String? systemPrompt;
   final String? promptFile;
+  final int maxIterations;
 
   AppConfig({
     this.opencodeApiKey,
@@ -17,6 +18,7 @@ class AppConfig {
     required this.acp,
     this.systemPrompt,
     this.promptFile,
+    this.maxIterations = 10,
   });
 
   factory AppConfig.fromYaml(Map<dynamic, dynamic> yaml) {
@@ -26,6 +28,7 @@ class AppConfig {
       zenEndpoint: yaml['zen_endpoint'] as String? ?? 'https://opencode.ai/zen',
       systemPrompt: yaml['system_prompt'] as String?,
       acp: AcpConfig.fromYaml(Map<dynamic, dynamic>.from(yaml['acp'] as Map? ?? {})),
+      maxIterations: yaml['max_iterations'] as int? ?? 10,
     );
   }
 
@@ -54,6 +57,7 @@ class AppConfig {
             systemPrompt: cfg.systemPrompt,
             acp: cfg.acp,
             promptFile: promptFile ?? cfg.promptFile,
+            maxIterations: cfg.maxIterations,
           );
         }
       }

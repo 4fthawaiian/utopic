@@ -19,6 +19,12 @@ zen_endpoint: "https://opencode.ai/zen"
 # system_prompt: |
 #   You are Utopic, a coding agent. Be concise.
 
+# Maximum iterations for the agent tool-calling loop.
+# If the AI exceeds this many rounds of tool calls without producing a text
+# response, it stops and reports the limit. Increase for complex multi-step
+# tasks; decrease to save API credits on runaway loops.
+max_iterations: 30
+
 # ACP (Agent Client Protocol) server configuration
 acp:
   enabled: false

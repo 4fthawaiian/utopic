@@ -77,14 +77,19 @@ automatically.
 
 ## Up Next
 
+> ℹ️ These features were prototyped on an old dangling branch (forked before
+> the `acp_dart` migration) and need **fresh implementations** against
+> current `main`. The old branch code is obsolete.
+
 ### 1. Readline-style input history
 
 **The problem:** Every prompt is typed fresh — there's no way to recall or edit
 a previous message.  Up-arrow should cycle through command history like bash/zsh.
 
-**Status:** Implemented on an unmerged branch (`00cab81`). Needs review and
-merge into `main`. Currently arrow keys are used for scroll navigation, so
-input history needs `Shift+↑` / `Shift+↓` or a dedicated keybinding.
+**Approach:** Keep an in-memory list of previous inputs. When `Shift+↑` is
+pressed (arrow keys are used for scroll navigation), cycle back through
+history. `Shift+↓` goes forward. Store history to `~/.config/utopic/history`
+(one per line, max 1000 entries).
 
 **Sketch:**
 
@@ -117,39 +122,41 @@ _history.add(text);
 _historyIndex = -1;
 ```
 
-Store history in `~/.config/utopic/history` (one line per entry, max 1000).
+**Status:** Fresh implementation needed in `utopic_tui.dart`.
 
 ---
 
-### 2. Auto-compaction & `/compact`
+### 2. `/clear` command
+
+**The problem:** No way to clear the current conversation without starting
+a new one (`/new`).
+
+**Status:** Easy win — clear messages in the active conversation, update the UI.
+
+---
+
+### 3. Auto-compaction & `/compact`
 
 **The problem:** Long conversations slow down the TUI. No automatic truncation
 of old messages.
 
-**Status:** Implemented on an unmerged branch (`a319137`, `04ecd49`). Needs
-review and merge. Adds auto-compaction when conversation exceeds a threshold
-and a `/compact` manual command.
+**Approach:** When a conversation exceeds a configurable threshold (e.g. 100
+messages), automatically trim older messages. Keep a summary or just drop
+the oldest N. Manual `/compact` command triggers the same logic.
+
+**Status:** Fresh implementation needed in `agent_service.dart`.
 
 ---
 
-### 3. ACP auto-start on boot
+### 4. ACP auto-start on boot
 
 **The problem:** The ACP server can't start automatically when utopic launches.
 You have to type `/acp` every time.
 
-**Status:** Implemented on an unmerged branch (`00cab81`). Reads
-`acp.enabled` from `utopic.yaml` and starts the server during
-`AgentService.initialize()`. Needs review and merge into `main`.
+**Approach:** Check `acp.enabled` in `utopic.yaml` during
+`AgentService.initialize()` — if true, start the ACP server automatically.
 
----
-
-### 4. ACP server timeout fixes & String ID support
-
-**The problem:** ACP server connections can hang indefinitely, and session IDs
-must support string types per JSON-RPC 2.0 spec.
-
-**Status:** Implemented on an unmerged branch (`f2fc5cc`, `52a4207`). Needs
-review and merge.
+**Status:** Fresh implementation needed in `agent_service.dart`.
 
 ---
 

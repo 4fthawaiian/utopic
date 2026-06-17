@@ -129,7 +129,7 @@ Future<void> _runOnce(String prompt, AppConfig config) async {
     ReadTool(), BashTool(), EditTool(), WriteTool(),
   ].map((t) => t.toJson()).toList();
 
-  const maxIterations = 10;
+  final maxIterations = config.maxIterations;
 
   try {
     for (var i = 0; i < maxIterations; i++) {

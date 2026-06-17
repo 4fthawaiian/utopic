@@ -219,7 +219,7 @@ class AgentService implements AcpAgentDelegate {
   /// Returns the final [AiResult] on success, or `null` if cancelled or if the
   /// iteration limit was reached without a text response.
   Future<AiResult?> _runAgentLoop(Conversation conv) async {
-    const maxIterations = 10;
+    final maxIterations = config.maxIterations;
     var iterations = 0;
 
     try {
@@ -815,7 +815,30 @@ class AgentService implements AcpAgentDelegate {
         'outputTokens': result.outputTokens,
       };
     } else {
-      throw Exception('Agent completed without producing a result');
+      // Null result means iteration limit or cancellation.
+      // The warning message was already added to the conversation by
+      // _runAgentLoop — grab it and stream it back to the client.
+      final lastMsg = conv.messages.lastWhere(
+        (m) => m.role == 'assistant',
+        orElse: () => Message(
+          role: 'assistant',
+          content: 'Agent stopped without producing a result.',
+        ),
+      );
+      try {
+        await connection.sessionUpdate(SessionNotification(
+          sessionId: sessionId,
+          update: AgentMessageChunkSessionUpdate(
+            content: TextContentBlock(text: lastMsg.content),
+          ),
+        ));
+      } catch (e) {
+        stderr.writeln('ACP: Failed to send iteration-limit notification: $e');
+      }
+      return {
+        'inputTokens': 0,
+        'outputTokens': 0,
+      };
     }
   }
 

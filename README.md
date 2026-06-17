@@ -14,7 +14,7 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 - 🤖 **OpenCode Zen** — Claude, GPT, Gemini, DeepSeek, Qwen pre-configured, live model list on startup
 - 🧠 **Skills** — Agent Skills spec (agentskills.io) — drop `skills/<name>/SKILL.md` in your project or `~/.config/utopic/skills/`
 - 📄 **Flexible prompts** — YAML config, `AGENTS.md` (project + global), `--prompt` flag, per-conversation `/prompt`
-- 🔄 **Agent loop** — Up to 10 iterations of tool calling (bash, read, write, edit), cancel anytime with `Ctrl+C`
+- 🔄 **Agent loop** — Multi-iteration tool calling (bash, read, write, edit), configurable via `max_iterations` in `utopic.yaml` (default 10), cancel anytime with `Ctrl+C`
 - 📂 **Conversations** — Multiple conversations, switch between them
 - ⚡ **One-shot mode** — `utopic "prompt"` prints the response and exits
 - 🔌 **ACP Server + Client** — Agent Client Protocol server for external tools, plus client mode to use remote ACP servers as model providers
@@ -252,6 +252,13 @@ Config is loaded from (in priority order):
 2. `./utopic.yaml`
 3. `~/.config/utopic/config.yaml`
 4. `~/.utopic.yaml`
+
+**`max_iterations`** — maximum rounds of AI + tool calls before the agent stops
+(prevents runaway loops). Default: 10. Increase for complex multi-step tasks.
+
+**Model** — set via `default_model` (e.g. `deepseek-v4-flash-free`).
+
+**ACP server auto-start** — set `acp.enabled: true` to start the server on boot.
 
 **API key** — provide via `OPENCODE_API_KEY` env var or `opencode_api_key` in YAML.
 
