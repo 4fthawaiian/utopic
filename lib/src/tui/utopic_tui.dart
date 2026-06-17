@@ -615,7 +615,7 @@ class UtopicTuiApp extends TuiApp {
       // Ignore special control chars that slip through as printable
       if (ch.codeUnits.length == 1 && ch.codeUnitAt(0) < 32) return;
       _input = _input.substring(0, _cursor) + ch + _input.substring(_cursor);
-      _cursor++;
+      _cursor += ch.length; // advance by code units (may be >1 for emoji)
       _altPending = false;
       return;
     }
@@ -628,23 +628,52 @@ class UtopicTuiApp extends TuiApp {
         return;
       case TuiKeyCode.backspace:
         if (_cursor > 0) {
-          _input = _input.substring(0, _cursor - 1) + _input.substring(_cursor);
-          _cursor--;
+          // Delete one whole Unicode code point (may be 2 code units for emoji)
+          final trailing = _input.codeUnitAt(_cursor - 1);
+          int del = 1;
+          if (trailing >= 0xDC00 && trailing <= 0xDFFF && _cursor >= 2) {
+            final leading = _input.codeUnitAt(_cursor - 2);
+            if (leading >= 0xD800 && leading <= 0xDBFF) del = 2;
+          }
+          _input = _input.substring(0, _cursor - del) + _input.substring(_cursor);
+          _cursor -= del;
         }
         _altPending = false;
         return;
       case TuiKeyCode.delete:
         if (_cursor < _input.length) {
-          _input = _input.substring(0, _cursor) + _input.substring(_cursor + 1);
+          // Delete one whole Unicode code point forward
+          int del = 1;
+          final leading = _input.codeUnitAt(_cursor);
+          if (leading >= 0xD800 &&
+              leading <= 0xDBFF &&
+              _cursor + 1 < _input.length) {
+            final trailing = _input.codeUnitAt(_cursor + 1);
+            if (trailing >= 0xDC00 && trailing <= 0xDFFF) del = 2;
+          }
+          _input = _input.substring(0, _cursor) + _input.substring(_cursor + del);
         }
         _altPending = false;
         return;
       case TuiKeyCode.arrowLeft:
-        if (_cursor > 0) _cursor--;
+        if (_cursor > 0) {
+          // Jump over whole surrogate pair
+          _cursor--;
+          if (_cursor > 0) {
+            final cu = _input.codeUnitAt(_cursor);
+            if (cu >= 0xDC00 && cu <= 0xDFFF) _cursor--;
+          }
+        }
         _altPending = false;
         return;
       case TuiKeyCode.arrowRight:
-        if (_cursor < _input.length) _cursor++;
+        if (_cursor < _input.length) {
+          _cursor++;
+          if (_cursor < _input.length) {
+            final cu = _input.codeUnitAt(_cursor - 1);
+            if (cu >= 0xD800 && cu <= 0xDBFF) _cursor++;
+          }
+        }
         _altPending = false;
         return;
 
