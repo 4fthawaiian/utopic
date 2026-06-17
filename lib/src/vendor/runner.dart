@@ -59,6 +59,10 @@ class UtopicRunner {
       stdin.echoMode = false;
       stdin.lineMode = false;
 
+      // Enable bracketed paste mode so pasted text is wrapped in
+      // \x1b[200~...\x1b[201~, letting us distinguish pasted \r from Enter.
+      terminal.write('\x1b[?2004h');
+
       _keySub = stdin.listen(
         (List<int> bytes) {
           final events = _parseInputBytes(bytes);
@@ -70,6 +74,7 @@ class UtopicRunner {
               stdin.lineMode = true;
               stdin.echoMode = true;
               terminal.write('\x1b[0m');
+              terminal.write('\x1b[?2004l'); // disable bracketed paste
               terminal.showCursor();
               terminal.write('\x1b[?1049l');
               onBeforeExit?.call();
@@ -231,10 +236,14 @@ class UtopicRunner {
     } catch (_) {}
     await _keySub?.cancel();
     terminal.write('\x1b[0m');
+    terminal.write('\x1b[?2004l'); // disable bracketed paste
     terminal.showCursor();
     terminal.write('\x1b[?1049l');
   }
 }
+
+/// Tracks whether we are inside a bracketed paste (\x1b[200~ … \x1b[201~).
+bool _pasteMode = false;
 
 // --- Async stdin byte-level key parser ---
 
@@ -247,8 +256,34 @@ List<TuiKeyEvent> _parseInputBytes(List<int> bytes) {
 
     if (b == 27) {
       if (i + 1 < bytes.length && bytes[i + 1] == 91) {
+        // ESC [ sequence — read SI param digits then tilde
         i += 2;
-        if (i < bytes.length) {
+        final paramStart = i;
+        while (i < bytes.length && bytes[i] >= 48 && bytes[i] <= 57) {
+          i++;
+        }
+        if (i < bytes.length && bytes[i] == 126) {
+          // Terminated with tilde — multi-digit CSI
+          final param = int.tryParse(
+                utf8.decode(bytes.sublist(paramStart, i)),
+              ) ??
+              0;
+          i++; // skip tilde
+          if (param == 200) {
+            _pasteMode = true;
+          } else if (param == 201) {
+            _pasteMode = false;
+          } else if (param == 3) {
+            events.add(const TuiKeyEvent(code: TuiKeyCode.delete));
+          } else if (param == 5) {
+            events.add(const TuiKeyEvent(code: TuiKeyCode.pageUp));
+          } else if (param == 6) {
+            events.add(const TuiKeyEvent(code: TuiKeyCode.pageDown));
+          }
+        } else if (i > paramStart) {
+          // Digits with no tilde — might be a mouse sequence; skip
+        } else {
+          // Single byte CSI command (arrows, home, end, etc.)
           final seq = bytes[i];
           i++;
           switch (seq) {
@@ -264,21 +299,6 @@ List<TuiKeyEvent> _parseInputBytes(List<int> bytes) {
               events.add(const TuiKeyEvent(code: TuiKeyCode.home));
             case 70:
               events.add(const TuiKeyEvent(code: TuiKeyCode.end));
-            case 51:
-              if (i < bytes.length && bytes[i] == 126) {
-                i++;
-                events.add(const TuiKeyEvent(code: TuiKeyCode.delete));
-              }
-            case 53:
-              if (i < bytes.length && bytes[i] == 126) {
-                i++;
-                events.add(const TuiKeyEvent(code: TuiKeyCode.pageUp));
-              }
-            case 54:
-              if (i < bytes.length && bytes[i] == 126) {
-                i++;
-                events.add(const TuiKeyEvent(code: TuiKeyCode.pageDown));
-              }
           }
         }
       } else {
@@ -286,7 +306,14 @@ List<TuiKeyEvent> _parseInputBytes(List<int> bytes) {
         i++;
       }
     } else if (b == 13 || b == 10) {
-      events.add(const TuiKeyEvent(code: TuiKeyCode.enter));
+      if (_pasteMode) {
+        // Inside a bracketed paste — treat \r/\n as literal newline
+        events.add(TuiKeyEvent(code: TuiKeyCode.printable, char: '\n'));
+        // Skip following \n if this was \r (CRLF normalization)
+        if (b == 13 && i + 1 < bytes.length && bytes[i + 1] == 10) i++;
+      } else {
+        events.add(const TuiKeyEvent(code: TuiKeyCode.enter));
+      }
       i++;
     } else if (b == 9) {
       events.add(const TuiKeyEvent(code: TuiKeyCode.tab));
