@@ -24,7 +24,7 @@ class UtopicTuiApp extends TuiApp {
   bool _quitting = false;
   bool _selectingModel = false;
   bool _isProcessing = false;
-  DateTime? _lastEscapeTime;
+  bool _altPending = false;
   bool _phobeMode = false;
   int _selIndex = 0;
   int _spinnerFrame = 0;
@@ -616,80 +616,77 @@ class UtopicTuiApp extends TuiApp {
       if (ch.codeUnits.length == 1 && ch.codeUnitAt(0) < 32) return;
       _input = _input.substring(0, _cursor) + ch + _input.substring(_cursor);
       _cursor++;
-      _lastEscapeTime = null;
+      _altPending = false;
       return;
     }
 
     switch (event.code) {
       // Editing
       case TuiKeyCode.escape:
-        // Pressing Esc alone starts the Alt+Enter window
-        _lastEscapeTime = DateTime.now();
+        // Esc before Enter = Alt+Enter (pending)
+        _altPending = true;
         return;
       case TuiKeyCode.backspace:
         if (_cursor > 0) {
           _input = _input.substring(0, _cursor - 1) + _input.substring(_cursor);
           _cursor--;
         }
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.delete:
         if (_cursor < _input.length) {
           _input = _input.substring(0, _cursor) + _input.substring(_cursor + 1);
         }
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.arrowLeft:
         if (_cursor > 0) _cursor--;
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.arrowRight:
         if (_cursor < _input.length) _cursor++;
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
 
       // Submit or newline
       case TuiKeyCode.enter:
-        if (_lastEscapeTime != null &&
-            DateTime.now().difference(_lastEscapeTime!) < const Duration(milliseconds: 300)) {
-          // Alt+Enter — insert literal newline
-          _lastEscapeTime = null;
+        if (_altPending) {
+          _altPending = false;
           _input = '${_input.substring(0, _cursor)}\n${_input.substring(_cursor)}';
           _cursor++;
           return;
         }
-        _lastEscapeTime = null;
         _submit(context);
         return;
 
       // Scrolling
       case TuiKeyCode.arrowUp:
         _scroll.scrollBy(-1, context.height - 4, context.width - 4);
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.arrowDown:
         _scroll.scrollBy(1, context.height - 4, context.width - 4);
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.pageUp:
         _scroll.scrollPage(context.height - 4, context.width - 4, false);
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.pageDown:
         _scroll.scrollPage(context.height - 4, context.width - 4);
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.home:
         _scroll.scrollTop();
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
       case TuiKeyCode.end:
         _scroll.scrollBottom(context.height - 4, context.width - 4);
-        _lastEscapeTime = null;
+        _altPending = false;
         return;
 
       default:
-        _lastEscapeTime = null;
+        _altPending = false;
         break;
     }
   }
