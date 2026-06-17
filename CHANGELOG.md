@@ -1,3 +1,20 @@
+## 1.1.2
+
+- **Fix emoji split on paste — surrogate pair corruption causing Zen API 500**
+  - When pasting text containing emoji (surrogate pairs), `_cursor++` only
+    advanced by 1 code unit, leaving the cursor between the high and low
+    surrogates. Subsequent character insertion (e.g., `\n` from a paste)
+    would split the pair, producing unpaired surrogates in the input string.
+    When this corrupted string was sent to the Zen API, the server returned
+    HTTP 500 (Internal server error) on every subsequent request in that
+    session.
+  - Fixed: `_cursor += ch.length` instead of `_cursor++` for printable input.
+  - Fixed: Backspace and Delete now detect and remove whole surrogate pairs
+    (2 code units) instead of splitting them.
+  - Fixed: Arrow left/right skip over surrogate pairs so the cursor never
+    lands between surrogates.
+  (`utopic_tui.dart`)
+
 ## 1.1.1
 
 - **Fix /phobe freeze + make --phobe actually remove pride content**
