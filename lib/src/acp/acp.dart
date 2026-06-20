@@ -5,7 +5,15 @@ export 'package:acp_dart/acp_dart.dart' show
   AcpStream,
   ndJsonStream,
   SessionNotification,
+  SessionUpdate,
   AgentMessageChunkSessionUpdate,
+  AgentThoughtChunkSessionUpdate,
+  ToolCallSessionUpdate,
+  ToolCallUpdateSessionUpdate,
+  ToolCallStatus,
+  ToolCallLocation,
+  ToolKind,
+  ContentToolCallContent,
   TextContentBlock;
 export 'acp_server.dart';
 export 'acp_dart_client.dart';

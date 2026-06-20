@@ -216,11 +216,32 @@ class AgentService implements AcpAgentDelegate {
   /// message appended.  Handles up to [maxIterations] rounds of:
   ///   AI call → tool calls? → execute tools → loop → text response
   ///
+  /// If [acpStream] is provided (an ACP [AgentSideConnection] + [sessionId]),
+  /// intermediate progress is streamed as session/update notifications so the
+  /// remote client (e.g. Paseo) can show thinking and tool-call progress.
+  ///
   /// Returns the final [AiResult] on success, or `null` if cancelled or if the
   /// iteration limit was reached without a text response.
-  Future<AiResult?> _runAgentLoop(Conversation conv) async {
+  Future<AiResult?> _runAgentLoop(
+    Conversation conv, {
+    AgentSideConnection? acpConnection,
+    String? acpSessionId,
+  }) async {
     final maxIterations = config.maxIterations;
     var iterations = 0;
+
+    /// Send an ACP session update if we're streaming to a remote client.
+    Future<void> sendAcpUpdate(SessionUpdate update) async {
+      if (acpConnection == null || acpSessionId == null) return;
+      try {
+        await acpConnection.sessionUpdate(SessionNotification(
+          sessionId: acpSessionId,
+          update: update,
+        ));
+      } catch (e) {
+        stderr.writeln('ACP stream error: $e');
+      }
+    }
 
     try {
       while (iterations < maxIterations) {
@@ -236,6 +257,16 @@ class AgentService implements AcpAgentDelegate {
         }
 
         iterations++;
+
+        // Send a "thinking" update to the ACP client so they know
+        // the AI is processing (instead of silence).
+        await sendAcpUpdate(AgentThoughtChunkSessionUpdate(
+          content: TextContentBlock(
+            text: iterations > 1
+                ? 'Continuing agent loop (round $iterations)...'
+                : 'Thinking...',
+          ),
+        ));
 
         final result = await ai.complete(
           conversation: conv,
@@ -268,6 +299,25 @@ class AgentService implements AcpAgentDelegate {
           ));
           _notifyUpdates();
 
+          // Stream any text that came with the tool calls
+          if (result.content.isNotEmpty) {
+            await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+              content: TextContentBlock(text: result.content),
+            ));
+          }
+
+          // Stream tool call notifications so the client can see them
+          for (final tc in result.toolCalls) {
+            await sendAcpUpdate(ToolCallSessionUpdate(
+              toolCallId: tc.id,
+              title: tc.name,
+              status: ToolCallStatus.inProgress,
+              rawInput: tc.arguments,
+              kind: _toolKindFor(tc.name),
+              locations: _toolLocationsFor(tc.name, tc.arguments),
+            ));
+          }
+
           // Execute each tool call
           for (final tc in result.toolCalls) {
             // Check cancellation before each tool execution
@@ -288,6 +338,14 @@ class AgentService implements AcpAgentDelegate {
               toolCallId: tc.id,
             ));
             _notifyUpdates();
+
+            // Send tool result as an update
+            await sendAcpUpdate(ToolCallUpdateSessionUpdate(
+              toolCallId: tc.id,
+              title: tc.name,
+              status: ToolCallStatus.completed,
+              rawOutput: {'result': output.length > 500 ? '${output.substring(0, 500)}...' : output},
+            ));
           }
         } else {
           // Text response — done
@@ -298,6 +356,13 @@ class AgentService implements AcpAgentDelegate {
             ));
           }
           _notifyUpdates();
+
+          // Stream the final text response
+          if (result.content.isNotEmpty) {
+            await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+              content: TextContentBlock(text: result.content),
+            ));
+          }
           return result;
         }
       }
@@ -309,6 +374,12 @@ class AgentService implements AcpAgentDelegate {
             'Your request may be incomplete. Try a more specific prompt.',
       ));
       _notifyUpdates();
+      await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+        content: TextContentBlock(
+          text: '⚠️ Reached maximum iterations ($maxIterations). '
+              'Your request may be incomplete. Try a more specific prompt.',
+        ),
+      ));
       return null;
     } catch (e) {
       conv.addMessage(Message(
@@ -316,8 +387,36 @@ class AgentService implements AcpAgentDelegate {
         content: '⚠️ Error: $e',
       ));
       _notifyUpdates();
+      await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+        content: TextContentBlock(text: '⚠️ Error: $e'),
+      ));
       rethrow;
     }
+  }
+
+  /// Map a tool name to the appropriate [ToolKind] for ACP tool call updates.
+  ToolKind _toolKindFor(String name) {
+    switch (name) {
+      case 'read':
+        return ToolKind.read;
+      case 'write':
+        return ToolKind.edit;
+      case 'edit':
+        return ToolKind.edit;
+      case 'bash':
+        return ToolKind.execute;
+      default:
+        return ToolKind.other;
+    }
+  }
+
+  /// Extract file locations from tool arguments for ACP tool call updates.
+  List<ToolCallLocation> _toolLocationsFor(String name, Map<String, dynamic> args) {
+    final path = args['path'] as String? ?? args['file'] as String?;
+    if (path != null) {
+      return [ToolCallLocation(path: path)];
+    }
+    return [];
   }
 
   /// Send a message and get response (with tool-calling agent loop).
@@ -780,61 +879,29 @@ class AgentService implements AcpAgentDelegate {
     conv.addMessage(Message(role: 'user', content: prompt));
     _notifyUpdates();
 
-    final result = await _runAgentLoop(conv);
+    // Run the agent loop with ACP streaming enabled — it sends intermediate
+    // thought, tool-call, and text updates so the client (Paseo) can display
+    // real-time progress instead of just the final result.
+    final result = await _runAgentLoop(
+      conv,
+      acpConnection: connection,
+      acpSessionId: sessionId,
+    );
 
     if (!_conversations.contains(conv)) {
       _conversations.add(conv);
     }
 
     if (result != null) {
-      // If the AI returned empty content after tool calls, use a fallback
-      // so the client (Paseo) still sees the conversation was handled.
-      final replyText = result.content.isNotEmpty
-          ? result.content
-          : '(no text response — tool execution completed)';
-
-      if (result.content.isEmpty) {
+      if (result.content.isEmpty && result.toolCalls.isEmpty) {
         stderr.writeln('ACP: AI returned empty content after prompt (tokens: '
             'input=${result.inputTokens}, output=${result.outputTokens})');
-      }
-
-      // Stream the full response as a session/update notification
-      // so the client (Paseo) can display the reply.
-      try {
-        await connection.sessionUpdate(SessionNotification(
-          sessionId: sessionId,
-          update: AgentMessageChunkSessionUpdate(
-            content: TextContentBlock(text: replyText),
-          ),
-        ));
-      } catch (e) {
-        stderr.writeln('ACP: Failed to send sessionUpdate notification: $e');
       }
       return {
         'inputTokens': result.inputTokens,
         'outputTokens': result.outputTokens,
       };
     } else {
-      // Null result means iteration limit or cancellation.
-      // The warning message was already added to the conversation by
-      // _runAgentLoop — grab it and stream it back to the client.
-      final lastMsg = conv.messages.lastWhere(
-        (m) => m.role == 'assistant',
-        orElse: () => Message(
-          role: 'assistant',
-          content: 'Agent stopped without producing a result.',
-        ),
-      );
-      try {
-        await connection.sessionUpdate(SessionNotification(
-          sessionId: sessionId,
-          update: AgentMessageChunkSessionUpdate(
-            content: TextContentBlock(text: lastMsg.content),
-          ),
-        ));
-      } catch (e) {
-        stderr.writeln('ACP: Failed to send iteration-limit notification: $e');
-      }
       return {
         'inputTokens': 0,
         'outputTokens': 0,
