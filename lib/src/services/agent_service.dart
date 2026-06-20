@@ -229,6 +229,9 @@ class AgentService implements AcpAgentDelegate {
   }) async {
     final maxIterations = config.maxIterations;
     var iterations = 0;
+    var totalInputTokens = 0;
+    var totalOutputTokens = 0;
+    final stopwatch = Stopwatch()..start();
 
     /// Send an ACP session update if we're streaming to a remote client.
     Future<void> sendAcpUpdate(SessionUpdate update) async {
@@ -241,6 +244,41 @@ class AgentService implements AcpAgentDelegate {
       } catch (e) {
         stderr.writeln('ACP stream error: $e');
       }
+    }
+
+    /// Send a thought update with a descriptive message about what the
+    /// agent is currently doing.
+    Future<void> sendThought(String message) async {
+      await sendAcpUpdate(AgentThoughtChunkSessionUpdate(
+        content: TextContentBlock(text: message),
+      ));
+    }
+
+    /// Look up the current model's context window limit.
+    int contextLimit() {
+      final modelId = ai.currentModel;
+      // Try ZenModels first
+      final zenModel = ZenModels.get(modelId);
+      if (zenModel != null) return zenModel.contextLimit;
+      // Fall back to a reasonable default
+      return 128000;
+    }
+
+    /// Send a usage update after each round with actual context window info.
+    ///
+    /// This tells the client (e.g. Paseo) how much of the context window
+    /// has been consumed so it can display a percentage bar and token counts.
+    Future<void> sendUsage() async {
+      final limit = contextLimit();
+      final totalTokensUsed = totalInputTokens + totalOutputTokens;
+      await sendAcpUpdate(UsageUpdate(
+        size: limit,
+        used: totalTokensUsed,
+        cost: Cost(
+          amount: totalInputTokens * 0.000001 + totalOutputTokens * 0.000004,
+          currency: 'USD',
+        ),
+      ));
     }
 
     try {
@@ -258,20 +296,45 @@ class AgentService implements AcpAgentDelegate {
 
         iterations++;
 
-        // Send a "thinking" update to the ACP client so they know
-        // the AI is processing (instead of silence).
-        await sendAcpUpdate(AgentThoughtChunkSessionUpdate(
-          content: TextContentBlock(
-            text: iterations > 1
-                ? 'Continuing agent loop (round $iterations)...'
-                : 'Thinking...',
-          ),
-        ));
+        // Build a descriptive thinking message based on the current round
+        // and what we know about the state.
+        final modelName = ai.currentModel;
+        if (iterations == 1) {
+          await sendThought(
+            '🤔 **Analyzing your request** (using `$modelName`)…',
+          );
+        } else {
+          // Try to summarize what the last tool results were about so the
+          // thinking message is actually informative.
+          final lastMsg = conv.messages.isNotEmpty
+              ? conv.messages.last
+              : null;
+          final lastToolResult = lastMsg != null && lastMsg.role == 'tool'
+              ? _summarizeToolResult(lastMsg.content)
+              : null;
+
+          if (lastToolResult != null) {
+            await sendThought(
+              '🤔 **Processing results** (round $iterations/$maxIterations · '
+              '`$modelName`)\n'
+              '└ _Last tool result: ${lastToolResult}_',
+            );
+          } else {
+            await sendThought(
+              '🤔 **Continuing analysis** (round $iterations/$maxIterations · '
+              '`$modelName`)…',
+            );
+          }
+        }
 
         final result = await ai.complete(
           conversation: conv,
           tools: _toolDefs,
         );
+
+        // Accumulate token usage
+        totalInputTokens += result.inputTokens;
+        totalOutputTokens += result.outputTokens;
 
         // Check cancellation after AI call (may have been set during the request)
         if (_cancelRequested) {
@@ -299,22 +362,34 @@ class AgentService implements AcpAgentDelegate {
           ));
           _notifyUpdates();
 
-          // Stream any text that came with the tool calls
+          // Stream the AI's reasoning / commentary as a thought update
+          // BEFORE the tool call notifications, so the client sees the
+          // "why" behind the tool calls.
           if (result.content.isNotEmpty) {
-            await sendAcpUpdate(AgentMessageChunkSessionUpdate(
-              content: TextContentBlock(text: result.content),
+            await sendAcpUpdate(AgentThoughtChunkSessionUpdate(
+              content: TextContentBlock(
+                text: '💡 **Reasoning:** ${result.content}',
+              ),
             ));
           }
 
           // Stream tool call notifications so the client can see them
           for (final tc in result.toolCalls) {
+            final locationInfo = _toolLocationsFor(tc.name, tc.arguments);
+            final pathHint = locationInfo.isNotEmpty
+                ? ' on `${locationInfo.first.path}`'
+                : '';
+            await sendThought(
+              '🔧 **${tc.name}**$pathHint — _preparing to execute…_',
+            );
+
             await sendAcpUpdate(ToolCallSessionUpdate(
               toolCallId: tc.id,
               title: tc.name,
               status: ToolCallStatus.inProgress,
               rawInput: tc.arguments,
               kind: _toolKindFor(tc.name),
-              locations: _toolLocationsFor(tc.name, tc.arguments),
+              locations: locationInfo,
             ));
           }
 
@@ -347,6 +422,9 @@ class AgentService implements AcpAgentDelegate {
               rawOutput: {'result': output.length > 500 ? '${output.substring(0, 500)}...' : output},
             ));
           }
+
+          // Send usage update after the round is complete
+          await sendUsage();
         } else {
           // Text response — done
           if (result.content.isNotEmpty) {
@@ -357,12 +435,23 @@ class AgentService implements AcpAgentDelegate {
           }
           _notifyUpdates();
 
+          stopwatch.stop();
           // Stream the final text response
           if (result.content.isNotEmpty) {
             await sendAcpUpdate(AgentMessageChunkSessionUpdate(
               content: TextContentBlock(text: result.content),
             ));
           }
+
+          // Send final usage update with cumulative token counts
+          await sendUsage();
+
+          // Send a final summary thought
+          final elapsed = stopwatch.elapsed;
+          await sendThought(
+            '✅ **Done** (${result.inputTokens + result.outputTokens} tokens · '
+            '${elapsed.inSeconds}s)',
+          );
           return result;
         }
       }
@@ -392,6 +481,20 @@ class AgentService implements AcpAgentDelegate {
       ));
       rethrow;
     }
+  }
+
+  /// Build a short one-line summary of a tool result string for display
+  /// in thinking updates (so the client sees what the last tool did).
+  String _summarizeToolResult(String content) {
+    final lines = content.split('\n').where((l) => l.trim().isNotEmpty);
+    if (lines.isEmpty) return '(empty)';
+    var summary = lines.first.trim();
+    if (summary.length > 80) {
+      summary = '${summary.substring(0, 77)}...';
+    }
+    // Remove markdown formatting for the summary
+    summary = summary.replaceAll(RegExp(r'[*_`#]'), '');
+    return summary;
   }
 
   /// Map a tool name to the appropriate [ToolKind] for ACP tool call updates.
@@ -845,6 +948,7 @@ class AgentService implements AcpAgentDelegate {
         'id': m.id,
         'name': m.displayName,
         'description': '${m.provider} · ${m.contextLimit ~/ 1000}K context',
+        'contextLimit': m.contextLimit,
       }).toList(),
     };
   }

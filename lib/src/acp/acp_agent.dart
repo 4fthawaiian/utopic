@@ -36,13 +36,22 @@ class AcpAgent implements Agent {
   Future<NewSessionResponse> newSession(NewSessionRequest params) async {
     final result = delegate.onNewSession(params.cwd);
 
-    // Build model info from available models
+    // Build model info from available models, including context limit
+    // in the _meta field so clients (like Paseo) can calculate
+    // context-window percentage from UsageUpdate updates.
     final modelInfos = (result['models'] as List<dynamic>? ?? [])
-        .map((m) => ModelInfo(
-              modelId: (m as Map<String, dynamic>)['id'] as String,
-              name: m['name'] as String,
-              description: m['description'] as String?,
-            ))
+        .map((m) {
+          final map = m as Map<String, dynamic>;
+          final contextLimit = map['contextLimit'] as int?;
+          return ModelInfo(
+            modelId: map['id'] as String,
+            name: map['name'] as String,
+            description: map['description'] as String?,
+            meta: contextLimit != null
+                ? {'contextLimit': contextLimit}
+                : null,
+          );
+        })
         .toList();
 
     return NewSessionResponse(

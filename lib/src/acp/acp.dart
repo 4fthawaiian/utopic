@@ -14,7 +14,9 @@ export 'package:acp_dart/acp_dart.dart' show
   ToolCallLocation,
   ToolKind,
   ContentToolCallContent,
-  TextContentBlock;
+  TextContentBlock,
+  Cost,
+  UsageUpdate;
 export 'acp_server.dart';
 export 'acp_dart_client.dart';
 export 'acp_agent.dart';
