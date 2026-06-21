@@ -10,6 +10,9 @@ build/
 
 # Compiled binary
 utopic
+utopic.*
+*.backup
+*.bak
 
 # OS
 .DS_Store
