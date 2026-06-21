@@ -120,8 +120,12 @@ write through `TuiTerminal.write()` or write directly to `/dev/stdout`.
 ### TUI Scroll Viewport
 
 Inside `TuiPanelBox(padding: 1)`, the actual scrollable viewport is
-`height - 8`, not `height - 4`. The `_scrollToBottom` method in
-`utopic_tui.dart` accounts for this.
+`h - 7 - inputLineCount` wide and `w - 4` tall (border 2 + padding 2 +
+status bar 1 + hint bar 1 + input area). Use `_viewportHeight(context)` and
+`_viewportWidth(context)` helpers instead of raw `context.height - 4`.
+
+**Gotcha**: if you add/remove UI rows (status bar, hints, input area
+height), you must update the helper formulas in `utopic_tui.dart`.
 
 ### Pride Theming
 

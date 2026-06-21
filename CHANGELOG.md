@@ -1,3 +1,20 @@
+## 1.1.3
+
+- **Fix TUI replies not visible — scroll viewport dimensions were wrong**
+  - `_scrollToBottom`, arrow up/down, PgUp/PgDn, End, and model selector all
+    used `context.height - 4` as the viewport height. But inside
+    `TuiPanelBox(padding: 1)`, the actual scrollable area is much smaller:
+    `h - 7 - inputLineCount` (border 2 + padding 2 + status bar 1 + hint bar 1
+    + input area). The entire last 4+ lines of the conversation were always
+    clipped off-screen, so AI replies (and any new content) were invisible.
+  - Fixed: added `_viewportHeight(context)` and `_viewportWidth(context)`
+    helpers that compute the actual inner viewport dimensions, and all scroll
+    methods now use them. (`utopic_tui.dart`)
+- **Fix AI reasoning text hidden during tool calls** — `_convToLines` had a
+  `continue` statement that skipped the "Utopic" header and any content for
+  assistant messages with tool calls. Now the header always shows, reasoning
+  text is displayed before the tool call list. (`utopic_tui.dart`)
+
 ## 1.1.2
 
 - **Fix emoji split on paste — surrogate pair corruption causing Zen API 500**

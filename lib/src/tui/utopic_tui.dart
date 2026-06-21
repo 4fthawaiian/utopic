@@ -46,33 +46,41 @@ class UtopicTuiApp extends TuiApp {
   @override
   Duration? get tickInterval => const Duration(milliseconds: 166);
 
-  UtopicTuiApp({required this.config, this._phobeMode = false, this._loadSessionId});
+  UtopicTuiApp({
+    required this.config,
+    this._phobeMode = false,
+    this._loadSessionId,
+  });
 
   @override
   void init(TuiContext context) {
     _agent = AgentService(config: config);
     _agent.phobeMode = _phobeMode;
-    
+
     // initialize() is async; chain the session load after it.
     try {
-      _agent.initialize().then((_) {
-        // Load a specific session if --load was given
-        final loadId = _loadSessionId;
-        if (loadId != null) {
-          _agent.loadSession(loadId).then((conv) {
-            if (conv != null) {
-              _status = 'Loaded: ${conv.title}  ·  ${_agent.ai.currentModel}';
-            } else {
-              _status = 'Session not found: $loadId';
+      _agent
+          .initialize()
+          .then((_) {
+            // Load a specific session if --load was given
+            final loadId = _loadSessionId;
+            if (loadId != null) {
+              _agent.loadSession(loadId).then((conv) {
+                if (conv != null) {
+                  _status =
+                      'Loaded: ${conv.title}  ·  ${_agent.ai.currentModel}';
+                } else {
+                  _status = 'Session not found: $loadId';
+                }
+                _refreshChat(context);
+              });
             }
+            _status = 'Ready  ·  ${_agent.ai.currentModel}  ·  /help';
             _refreshChat(context);
+          })
+          .catchError((e) {
+            _status = 'Init error: $e';
           });
-        }
-        _status = 'Ready  ·  ${_agent.ai.currentModel}  ·  /help';
-        _refreshChat(context);
-      }).catchError((e) {
-        _status = 'Init error: $e';
-      });
     } catch (e) {
       _status = 'Init error: $e';
     }
@@ -80,6 +88,20 @@ class UtopicTuiApp extends TuiApp {
     _agent.conversationsStream.listen((_) => _refreshChat(context));
     _agent.activeConversationStream.listen((_) => _refreshChat(context));
   }
+
+  /// Actual scroll viewport height inside TuiPanelBox(padding: 1).
+  /// Chat panel height = h - 3 - inputLineCount, minus 2 for border,
+  /// minus 2 for padding = h - 7 - inputLineCount.
+  int _viewportHeight(TuiContext context) {
+    final rawLines = _input.isEmpty ? 1 : '\n'.allMatches(_input).length + 1;
+    final inputLines = rawLines.clamp(1, 5);
+    return (context.height - 7 - inputLines).clamp(1, context.height);
+  }
+
+  /// Actual scroll viewport width inside TuiPanelBox(padding: 1).
+  /// Panel width minus 2 for border, minus 2 for padding = w - 4.
+  int _viewportWidth(TuiContext context) =>
+      (context.width - 4).clamp(1, context.width);
 
   void _refreshChat(TuiContext context) {
     final conv = _agent.activeConversation;
@@ -89,7 +111,7 @@ class UtopicTuiApp extends TuiApp {
   }
 
   void _scrollToBottom(TuiContext context) {
-    _scroll.scrollBottom(context.height - 4, context.width - 4);
+    _scroll.scrollBottom(_viewportHeight(context), _viewportWidth(context));
   }
 
   // Pride colors (rainbow flag) for cycling message headers
@@ -119,14 +141,23 @@ class UtopicTuiApp extends TuiApp {
       if (msg.role == 'user') {
         out.add(_header('You', _nextColor()));
       } else if (msg.role == 'assistant') {
+        out.add(_header('Utopic', _nextColor()));
         if (msg.toolCalls != null && msg.toolCalls!.isNotEmpty) {
+          // Show AI reasoning text (if any) before tool calls
+          if (msg.content.trim().isNotEmpty) {
+            out.add('');
+            for (final line in msg.content.split('\n')) {
+              out.add(line);
+            }
+          }
+          out.add('');
           out.add(_header('Tool calls', _nextColor()));
           for (final tc in msg.toolCalls!) {
             out.add('  🔧 ${tc['name']}(${tc['arguments']})');
           }
+          // Don't fall through to content display again
           continue;
         }
-        out.add(_header('Utopic', _nextColor()));
       } else if (msg.role == 'tool') {
         out.add(_header('Result', _nextColor()));
       }
@@ -160,15 +191,18 @@ class UtopicTuiApp extends TuiApp {
 
     _status = 'Thinking...';
     _isProcessing = true;
-    _agent.sendMessage(text).then((_) {
-      _status = 'Ready  ·  ${_agent.ai.currentModel}';
-      _isProcessing = false;
-      _refreshChat(context);
-    }).catchError((e) {
-      _status = 'Error: $e';
-      _isProcessing = false;
-      _refreshChat(context);
-    });
+    _agent
+        .sendMessage(text)
+        .then((_) {
+          _status = 'Ready  ·  ${_agent.ai.currentModel}';
+          _isProcessing = false;
+          _refreshChat(context);
+        })
+        .catchError((e) {
+          _status = 'Error: $e';
+          _isProcessing = false;
+          _refreshChat(context);
+        });
   }
 
   void _runCommand(String cmd, TuiContext context) {
@@ -250,7 +284,8 @@ class UtopicTuiApp extends TuiApp {
       case 'models':
         final lines = <String>['', ' Available Models:', ''];
         for (final m in _modelList) {
-          final active = _agent.ai.currentModel == m['value'] ? ' ◀ ACTIVE' : '';
+          final active =
+              _agent.ai.currentModel == m['value'] ? ' ◀ ACTIVE' : '';
           lines.add('   ${m['name']}$active');
         }
         _scroll.setLines(lines);
@@ -262,27 +297,36 @@ class UtopicTuiApp extends TuiApp {
         if (_agent.isAcpRunning) {
           _agent.stopAcpServer().then((_) => _status = 'ACP server stopped');
         } else {
-          _agent.startAcpServer()
-              .then((_) { _status = 'ACP server running on port ${config.acp.port}'; })
-              .catchError((e) { _status = 'ACP error: $e'; });
+          _agent
+              .startAcpServer()
+              .then((_) {
+                _status = 'ACP server running on port ${config.acp.port}';
+              })
+              .catchError((e) {
+                _status = 'ACP error: $e';
+              });
         }
         return;
 
       case 'acp-connect':
       case 'acp-connection':
         if (parts.length < 2) {
-          _status = 'Usage: /acp-connect <host> <port>  or  /acp-connect cli:<command>';
+          _status =
+              'Usage: /acp-connect <host> <port>  or  /acp-connect cli:<command>';
         } else if (parts[1].startsWith('cli:')) {
           final cmd = parts[1].substring(4);
           final args = parts.length > 2 ? parts.sublist(2) : <String>[];
           _status = 'Spawning $cmd...';
-          _agent.connectToAcpCli(cmd, args: args).then((info) {
-            final name = info['server_name'] ?? 'acp';
-            final model = info['agent_info']?['model'] ?? 'unknown';
-            _status = 'ACP: $name ($model) via $cmd';
-          }).catchError((e) {
-            _status = 'ACP cli error: $e';
-          });
+          _agent
+              .connectToAcpCli(cmd, args: args)
+              .then((info) {
+                final name = info['server_name'] ?? 'acp';
+                final model = info['agent_info']?['model'] ?? 'unknown';
+                _status = 'ACP: $name ($model) via $cmd';
+              })
+              .catchError((e) {
+                _status = 'ACP cli error: $e';
+              });
         } else if (parts.length >= 3) {
           final host = parts[1];
           final port = int.tryParse(parts[2]);
@@ -290,11 +334,16 @@ class UtopicTuiApp extends TuiApp {
             _status = 'Invalid port: ${parts[2]}';
           } else {
             _status = 'Connecting to $host:$port...';
-            _agent.connectToAcp(host, port).then((info) {
-              final name = info['server_name'] ?? 'acp';
-              final model = info['agent_info']?['model'] ?? 'unknown';
-              _status = 'ACP: $name ($model) @ $host:$port';
-            }).catchError((e) { _status = 'ACP connect error: $e'; });
+            _agent
+                .connectToAcp(host, port)
+                .then((info) {
+                  final name = info['server_name'] ?? 'acp';
+                  final model = info['agent_info']?['model'] ?? 'unknown';
+                  _status = 'ACP: $name ($model) @ $host:$port';
+                })
+                .catchError((e) {
+                  _status = 'ACP connect error: $e';
+                });
           }
         } else {
           _status = 'Usage: /acp-connect <host> <port>';
@@ -316,9 +365,10 @@ class UtopicTuiApp extends TuiApp {
         for (int i = 0; i < _agent.conversations.length; i++) {
           final conv = _agent.conversations[i];
           final active = conv == _agent.activeConversation ? ' ◀' : '';
-          final saved = _agent.listSavedSessions().any((s) => s['id'] == conv.id)
-              ? ' 💾'
-              : '';
+          final saved =
+              _agent.listSavedSessions().any((s) => s['id'] == conv.id)
+                  ? ' 💾'
+                  : '';
           lines.add('   ${i + 1}. ${conv.title}$active$saved');
           // Show session ID for saved convos
           if (conv.id.startsWith('conv_')) {
@@ -332,25 +382,31 @@ class UtopicTuiApp extends TuiApp {
         return;
 
       case 'save':
-        _agent.saveCurrentSession().then((_) {
-          _status = '✅ Saved (${_agent.activeConversation?.id})';
-        }).catchError((e) {
-          _status = 'Save failed: $e';
-        });
+        _agent
+            .saveCurrentSession()
+            .then((_) {
+              _status = '✅ Saved (${_agent.activeConversation?.id})';
+            })
+            .catchError((e) {
+              _status = 'Save failed: $e';
+            });
         return;
 
       case 'load':
         if (parts.length > 1) {
-          _agent.loadSession(parts[1]).then((conv) {
-            if (conv != null) {
-              _status = 'Loaded: ${conv.title}';
-              _refreshChat(context);
-            } else {
-              _status = 'Session not found: ${parts[1]}';
-            }
-          }).catchError((e) {
-            _status = 'Load failed: $e';
-          });
+          _agent
+              .loadSession(parts[1])
+              .then((conv) {
+                if (conv != null) {
+                  _status = 'Loaded: ${conv.title}';
+                  _refreshChat(context);
+                } else {
+                  _status = 'Session not found: ${parts[1]}';
+                }
+              })
+              .catchError((e) {
+                _status = 'Load failed: $e';
+              });
         } else {
           // Show list of saved sessions
           final saved = _agent.listSavedSessions();
@@ -359,8 +415,11 @@ class UtopicTuiApp extends TuiApp {
           } else {
             final lines = <String>['', ' Saved Sessions:', ''];
             for (final s in saved) {
-              final active = s['id'] == _agent.activeConversation?.id ? ' ◀' : '';
-              lines.add('   ${s['id']}  ${s['title']}  (${s['messageCount']} msgs)$active');
+              final active =
+                  s['id'] == _agent.activeConversation?.id ? ' ◀' : '';
+              lines.add(
+                '   ${s['id']}  ${s['title']}  (${s['messageCount']} msgs)$active',
+              );
             }
             lines.add('');
             lines.add('   /load <id> to load one');
@@ -375,9 +434,10 @@ class UtopicTuiApp extends TuiApp {
         try {
           _phobeMode = !_phobeMode;
           _agent.phobeMode = _phobeMode;
-          _status = _phobeMode
-              ? 'Phobe mode: colors off  (start with --phobe to skip the queer welcome)'
-              : '🌈 Pride mode: full queer energy!';
+          _status =
+              _phobeMode
+                  ? 'Phobe mode: colors off  (start with --phobe to skip the queer welcome)'
+                  : '🌈 Pride mode: full queer energy!';
           _refreshChat(context);
         } catch (e) {
           _status = 'Error toggling phobe mode: $e';
@@ -391,7 +451,9 @@ class UtopicTuiApp extends TuiApp {
 
   void _startModelSelector(TuiContext context) {
     _selectingModel = true;
-    _selIndex = _modelList.indexWhere((m) => m['value'] == _agent.ai.currentModel);
+    _selIndex = _modelList.indexWhere(
+      (m) => m['value'] == _agent.ai.currentModel,
+    );
     if (_selIndex < 0) _selIndex = 0;
     _renderModelSelector(context);
     _status = 'Select a model  ·  ↑↓ navigate  ·  Enter confirm  ·  Esc cancel';
@@ -411,16 +473,12 @@ class UtopicTuiApp extends TuiApp {
       final active = m['value'] == _agent.ai.currentModel ? '  ◀ active' : '';
       lines.add('$cursor${m['name']}$active');
     }
-    lines.addAll([
-      '',
-      '  (type /model <name> to select by name)',
-      '',
-    ]);
+    lines.addAll(['', '  (type /model <name> to select by name)', '']);
     _scroll.setLines(lines);
     _scroll.scrollTop();
 
     // Scroll so the selected model is visible.
-    final viewH = context.height - 4; // content area height
+    final viewH = _viewportHeight(context); // content area height
     final selectedLine = 5 + _selIndex; // 5 header lines before models
     if (selectedLine >= _scroll.offset + viewH) {
       _scroll.offset = (selectedLine - viewH + 1).clamp(0, lines.length);
@@ -497,9 +555,10 @@ class UtopicTuiApp extends TuiApp {
         ).paint(context, row: 0, col: i, width: 1, height: 1);
       }
       if (w > prideLen) {
-        final remaining = displayStatus.length > prideLen
-            ? displayStatus.substring(prideLen)
-            : '';
+        final remaining =
+            displayStatus.length > prideLen
+                ? displayStatus.substring(prideLen)
+                : '';
         TuiBackground(
           style: TuiStyle(bg: _prideColors.last),
           child: TuiText(
@@ -512,9 +571,8 @@ class UtopicTuiApp extends TuiApp {
 
     // Multi-line input area
     const maxInputLines = 5;
-    final rawInputLineCount = _input.isEmpty
-        ? 1
-        : '\n'.allMatches(_input).length + 1;
+    final rawInputLineCount =
+        _input.isEmpty ? 1 : '\n'.allMatches(_input).length + 1;
     final inputLineCount = rawInputLineCount.clamp(1, maxInputLines);
 
     // Chat panel (rows 1 to h-2-inputLineCount)
@@ -530,7 +588,8 @@ class UtopicTuiApp extends TuiApp {
 
     // Input area (rows h-1-inputLineCount to h-2)
     final inputRow = h - 1 - inputLineCount;
-    final promptColor = _phobeMode ? 244 : _prideColors[(_msgCount + 3) % _prideColors.length];
+    final promptColor =
+        _phobeMode ? 244 : _prideColors[(_msgCount + 3) % _prideColors.length];
     final inputBg = TuiStyle(bg: 235);
 
     // Draw input background and each line
@@ -538,9 +597,10 @@ class UtopicTuiApp extends TuiApp {
     for (var line = 0; line < inputLineCount; line++) {
       // Find end of this line
       final lineEnd = _input.indexOf('\n', lineStart);
-      final lineText = lineEnd == -1
-          ? _input.substring(lineStart)
-          : _input.substring(lineStart, lineEnd);
+      final lineText =
+          lineEnd == -1
+              ? _input.substring(lineStart)
+              : _input.substring(lineStart, lineEnd);
 
       // Check if cursor is on this line
       final isCursorLine =
@@ -552,7 +612,10 @@ class UtopicTuiApp extends TuiApp {
         style: inputBg,
         child: TuiRow(
           children: [
-            TuiText(line == 0 ? '> ' : '  ', style: TuiStyle(bold: true, fg: promptColor)),
+            TuiText(
+              line == 0 ? '> ' : '  ',
+              style: TuiStyle(bold: true, fg: promptColor),
+            ),
             TuiText(lineText),
             if (cursorCol >= lineText.length)
               TuiText(' ', style: TuiStyle(bg: 255)), // cursor
@@ -565,11 +628,12 @@ class UtopicTuiApp extends TuiApp {
     }
 
     // Bottom hint bar (row h-1)
-    final hint = _selectingModel
-        ? ' ↑/↓=select  Enter=confirm  Esc=cancel'
-        : (_phobeMode
-            ? ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  Alt+Enter=newline  — phobe mode'
-            : ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  Alt+Enter=newline  ✦ fabulously queer');
+    final hint =
+        _selectingModel
+            ? ' ↑/↓=select  Enter=confirm  Esc=cancel'
+            : (_phobeMode
+                ? ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  Alt+Enter=newline  — phobe mode'
+                : ' Enter=send  ↑/↓=scroll  /cmd  ^D=quit  ^C=cancel  Alt+Enter=newline  ✦ fabulously queer');
     TuiBackground(
       style: TuiStyle(
         bg: _phobeMode ? 236 : _prideColors[_msgCount % _prideColors.length],
@@ -635,7 +699,8 @@ class UtopicTuiApp extends TuiApp {
             final leading = _input.codeUnitAt(_cursor - 2);
             if (leading >= 0xD800 && leading <= 0xDBFF) del = 2;
           }
-          _input = _input.substring(0, _cursor - del) + _input.substring(_cursor);
+          _input =
+              _input.substring(0, _cursor - del) + _input.substring(_cursor);
           _cursor -= del;
         }
         _altPending = false;
@@ -651,7 +716,8 @@ class UtopicTuiApp extends TuiApp {
             final trailing = _input.codeUnitAt(_cursor + 1);
             if (trailing >= 0xDC00 && trailing <= 0xDFFF) del = 2;
           }
-          _input = _input.substring(0, _cursor) + _input.substring(_cursor + del);
+          _input =
+              _input.substring(0, _cursor) + _input.substring(_cursor + del);
         }
         _altPending = false;
         return;
@@ -681,7 +747,8 @@ class UtopicTuiApp extends TuiApp {
       case TuiKeyCode.enter:
         if (_altPending) {
           _altPending = false;
-          _input = '${_input.substring(0, _cursor)}\n${_input.substring(_cursor)}';
+          _input =
+              '${_input.substring(0, _cursor)}\n${_input.substring(_cursor)}';
           _cursor++;
           return;
         }
@@ -690,19 +757,23 @@ class UtopicTuiApp extends TuiApp {
 
       // Scrolling
       case TuiKeyCode.arrowUp:
-        _scroll.scrollBy(-1, context.height - 4, context.width - 4);
+        _scroll.scrollBy(-1, _viewportHeight(context), _viewportWidth(context));
         _altPending = false;
         return;
       case TuiKeyCode.arrowDown:
-        _scroll.scrollBy(1, context.height - 4, context.width - 4);
+        _scroll.scrollBy(1, _viewportHeight(context), _viewportWidth(context));
         _altPending = false;
         return;
       case TuiKeyCode.pageUp:
-        _scroll.scrollPage(context.height - 4, context.width - 4, false);
+        _scroll.scrollPage(
+          _viewportHeight(context),
+          _viewportWidth(context),
+          false,
+        );
         _altPending = false;
         return;
       case TuiKeyCode.pageDown:
-        _scroll.scrollPage(context.height - 4, context.width - 4);
+        _scroll.scrollPage(_viewportHeight(context), _viewportWidth(context));
         _altPending = false;
         return;
       case TuiKeyCode.home:
@@ -710,7 +781,7 @@ class UtopicTuiApp extends TuiApp {
         _altPending = false;
         return;
       case TuiKeyCode.end:
-        _scroll.scrollBottom(context.height - 4, context.width - 4);
+        _scroll.scrollBottom(_viewportHeight(context), _viewportWidth(context));
         _altPending = false;
         return;
 
