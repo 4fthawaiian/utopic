@@ -43,24 +43,24 @@ class ZenModels {
     ZenModel(id: 'claude-opus-4-5', provider: 'anthropic', contextLimit: 200000),
 
     // GPT
-    ZenModel(id: 'gpt-5.5-pro', provider: 'openai'),
-    ZenModel(id: 'gpt-5.4', provider: 'openai'),
-    ZenModel(id: 'gpt-5.4-mini', provider: 'openai'),
-    ZenModel(id: 'gpt-5.4-nano', provider: 'openai'),
-    ZenModel(id: 'gpt-5-nano', provider: 'openai'),
+    ZenModel(id: 'gpt-5.5-pro', provider: 'openai', contextLimit: 128000),
+    ZenModel(id: 'gpt-5.4', provider: 'openai', contextLimit: 128000),
+    ZenModel(id: 'gpt-5.4-mini', provider: 'openai', contextLimit: 128000),
+    ZenModel(id: 'gpt-5.4-nano', provider: 'openai', contextLimit: 128000),
+    ZenModel(id: 'gpt-5-nano', provider: 'openai', contextLimit: 128000),
 
     // Gemini
-    ZenModel(id: 'gemini-3.5-flash', provider: 'google'),
-    ZenModel(id: 'gemini-3.1-pro', provider: 'google'),
+    ZenModel(id: 'gemini-3.5-flash', provider: 'google', contextLimit: 1000000),
+    ZenModel(id: 'gemini-3.1-pro', provider: 'google', contextLimit: 1000000),
 
     // DeepSeek
-    ZenModel(id: 'deepseek-v4-flash', provider: 'deepseek'),
-    ZenModel(id: 'deepseek-v4-pro', provider: 'deepseek'),
+    ZenModel(id: 'deepseek-v4-flash', provider: 'deepseek', contextLimit: 128000),
+    ZenModel(id: 'deepseek-v4-pro', provider: 'deepseek', contextLimit: 128000),
 
     // Others
-    ZenModel(id: 'grok-build-0.1', provider: 'xai'),
-    ZenModel(id: 'qwen3.6-plus', provider: 'qwen'),
-    ZenModel(id: 'kimi-k2.5', provider: 'moonshot'),
+    ZenModel(id: 'grok-build-0.1', provider: 'xai', contextLimit: 128000),
+    ZenModel(id: 'qwen3.6-plus', provider: 'qwen', contextLimit: 128000),
+    ZenModel(id: 'kimi-k2.5', provider: 'moonshot', contextLimit: 128000),
   ];
 
   static List<ZenModel> _models = List.from(_defaults);
@@ -71,6 +71,23 @@ class ZenModels {
 
   /// Get model by ID (e.g. `deepseek-v4-flash-free`).
   static ZenModel? get(String id) => _byId[id];
+
+  /// Look up the context window limit for a model ID.
+  /// Falls back to sensible defaults based on model family,
+  /// then to [defaultLimit].
+  static int contextLimitFor(String modelId, {int defaultLimit = 128000}) {
+    final model = _byId[modelId];
+    if (model != null) return model.contextLimit;
+    // Family-based fallbacks
+    final lower = modelId.toLowerCase();
+    if (lower.contains('claude') || lower.contains('fable')) return 200000;
+    if (lower.contains('gemini')) return 1000000;
+    if (lower.contains('gpt') || lower.contains('o1') || lower.contains('o3')) {
+      return 128000;
+    }
+    if (lower.contains('deepseek')) return 128000;
+    return defaultLimit;
+  }
 
   /// Inherit provider from the model ID string.
   static String _inferProvider(String id) {

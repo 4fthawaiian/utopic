@@ -155,6 +155,7 @@ class AgentService implements AcpAgentDelegate {
     // Saved sessions are still available via /list and /switch.
     final freshConv = Conversation(
       title: 'Welcome to Utopic Agent',
+      contextLimit: ZenModels.contextLimitFor(ai.currentModel),
     );
     freshConv.addMessage(Message(
       role: 'system',
@@ -229,8 +230,6 @@ class AgentService implements AcpAgentDelegate {
   }) async {
     final maxIterations = config.maxIterations;
     var iterations = 0;
-    var totalInputTokens = 0;
-    var totalOutputTokens = 0;
     final stopwatch = Stopwatch()..start();
 
     /// Send an ACP session update if we're streaming to a remote client.
@@ -254,34 +253,39 @@ class AgentService implements AcpAgentDelegate {
       ));
     }
 
-    /// Look up the current model's context window limit.
-    int contextLimit() {
-      final modelId = ai.currentModel;
-      // Try ZenModels first
-      final zenModel = ZenModels.get(modelId);
-      if (zenModel != null) return zenModel.contextLimit;
-      // Fall back to a reasonable default
-      return 128000;
+    /// Ensure the conversation's context limit matches the current model.
+    void syncContextLimit() {
+      conv.contextLimit = ZenModels.contextLimitFor(ai.currentModel);
     }
 
-    /// Send a usage update after each round with actual context window info.
+    /// Send a usage update with actual context window info.
     ///
     /// This tells the client (e.g. Paseo) how much of the context window
     /// has been consumed so it can display a percentage bar and token counts.
     Future<void> sendUsage() async {
-      final limit = contextLimit();
-      final totalTokensUsed = totalInputTokens + totalOutputTokens;
+      syncContextLimit();
+      final used = conv.contextTokens;
+      final limit = conv.contextLimit;
       await sendAcpUpdate(UsageUpdate(
         size: limit,
-        used: totalTokensUsed,
+        used: used,
         cost: Cost(
-          amount: totalInputTokens * 0.000001 + totalOutputTokens * 0.000004,
+          amount: used * 0.000001,
           currency: 'USD',
         ),
       ));
     }
 
     try {
+      // Ensure context limit is synced and send an initial UsageUpdate
+      // so Paseo immediately shows a context bar, even before the first AI call.
+      syncContextLimit();
+      if (conv.contextTokens == 0) {
+        // Estimate tokens from the conversation so far (system prompt, etc.)
+        conv.contextTokens = conv.estimateContextTokens();
+      }
+      await sendUsage();
+
       while (iterations < maxIterations) {
         // Check cancellation before each AI call
         if (_cancelRequested) {
@@ -332,9 +336,13 @@ class AgentService implements AcpAgentDelegate {
           tools: _toolDefs,
         );
 
-        // Accumulate token usage
-        totalInputTokens += result.inputTokens;
-        totalOutputTokens += result.outputTokens;
+        // Store the actual context size from the API response.
+        // result.inputTokens reflects the full conversation sent to the model,
+        // so this is the real, authoritative token count.
+        conv.contextTokens = result.inputTokens;
+        // Re-sync context limit in case the model changed inside
+        // ai.complete() (e.g. via ACP model switch).
+        syncContextLimit();
 
         // Check cancellation after AI call (may have been set during the request)
         if (_cancelRequested) {
@@ -617,7 +625,7 @@ class AgentService implements AcpAgentDelegate {
         if (parts.length > 1) {
           final modelId = parts[1];
           if (ZenModels.get(modelId) != null) {
-            ai.currentModel = modelId;
+            setModel(modelId);
             final msg = Message(
               role: 'assistant',
               content: '✅ Switched to model: `$modelId`',
@@ -759,6 +767,8 @@ class AgentService implements AcpAgentDelegate {
 
   void createNewConversation() {
     final conv = Conversation(title: 'Conversation ${_conversations.length + 1}');
+    conv.contextLimit = ZenModels.contextLimitFor(ai.currentModel);
+    conv.contextTokens = 0;
     conv.addMessage(Message(
       role: 'system',
       content: buildSystemPrompt(),
@@ -804,6 +814,16 @@ class AgentService implements AcpAgentDelegate {
   /// Whether the agent is currently using a remote ACP server as its
   /// model provider.
   bool get isUsingAcp => ai is AcpAiService;
+
+  /// Set the active model and sync the conversation's context limit.
+  /// Call this instead of setting [ai.currentModel] directly to keep
+  /// the context indicator accurate.
+  void setModel(String modelId) {
+    ai.currentModel = modelId;
+    if (_activeConv != null) {
+      _activeConv!.contextLimit = ZenModels.contextLimitFor(modelId);
+    }
+  }
   /// Connect to a remote ACP server and use it as the model provider.
   ///
   /// Saves the current [ZenAiService] as a fallback so [disconnectFromAcp]
@@ -900,6 +920,13 @@ class AgentService implements AcpAgentDelegate {
   Future<Conversation?> loadSession(String id) async {
     final conv = _sessionStore.load(id);
     if (conv == null) return null;
+
+    // Ensure context limit matches current model
+    conv.contextLimit = ZenModels.contextLimitFor(ai.currentModel);
+    // If loaded from an older save without contextTokens, estimate them
+    if (conv.contextTokens == 0) {
+      conv.contextTokens = conv.estimateContextTokens();
+    }
 
     // Replace or add
     final idx = _conversations.indexWhere((c) => c.id == id);

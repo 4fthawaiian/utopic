@@ -271,7 +271,7 @@ class UtopicTuiApp extends TuiApp {
         if (parts.length > 1) {
           final modelId = parts[1];
           if (_modelList.any((m) => m['value'] == modelId)) {
-            _agent.ai.currentModel = modelId;
+            _agent.setModel(modelId);
             _status = 'Model: $modelId';
           } else {
             _status = 'Unknown model: $modelId';
@@ -503,7 +503,7 @@ class UtopicTuiApp extends TuiApp {
         return;
       case TuiKeyCode.enter:
         final model = _modelList[_selIndex];
-        _agent.ai.currentModel = model['value'] as String;
+        _agent.setModel(model['value'] as String);
         _selectingModel = false;
         _status = 'Model: ${model['name']}';
         _refreshChat(context);
@@ -534,6 +534,16 @@ class UtopicTuiApp extends TuiApp {
       displayStatus = ' $s thinkin$dots';
     } else {
       displayStatus = ' $_status';
+    }
+
+    // Append context usage indicator if we have token data
+    final conv = _agent.activeConversation;
+    if (conv != null && conv.contextTokens > 0) {
+      final ctx = conv.contextSummary;
+      // Only show if there's room in the status bar
+      if (displayStatus.length + ctx.length + 6 < context.width) {
+        displayStatus += '  ·  📊 $ctx';
+      }
     }
 
     if (_phobeMode) {
