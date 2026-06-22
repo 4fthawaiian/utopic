@@ -1,3 +1,40 @@
+## 1.2.0
+
+- **✨ OpenRouter provider support** — Utopic can now use OpenRouter as an
+  AI model provider alongside OpenCode Zen. Switch at runtime with
+  `/provider <zen|openrouter>` or via the `--openrouter` CLI flag.
+  (`ai_service.dart`, `agent_service.dart`, `utopic_tui.dart`)
+- **New `OpenRouterAiService`** — Full Chat Completions API implementation
+  with tool calling, streaming support, and automatic format conversion
+  from the internal Responses API format. (`ai_service.dart`)
+- **Provider-aware model management** — `/models` now shows both Zen and
+  OpenRouter model lists. `/model <id>` auto-switches providers when the
+  model belongs to the other provider. (`agent_service.dart`)
+- **Combined model catalog** — `ZenModels` now holds both Zen API and
+  OpenRouter model lists. `onNewSession()` sends all models (deduplicated)
+  so Paseo's model selector sees everything. (`zen_models.dart`)
+- **Config merging** — `AppConfig.load()` now merges values from multiple
+  config files (later files fill in missing values from earlier ones),
+  and falls back to environment variables for API keys.
+  (`app_config.dart`)
+- **Config file rename** — `utopic.yaml` → `config.yaml` for consistency.
+  The old filename is no longer checked. (`app_config.dart`)
+- **New config fields** — `provider`, `openrouter_api_key`,
+  `openrouter_endpoint`, `default_openrouter_model`.
+  (`app_config.dart`, `config.yaml`)
+- **`/provider` slash command** — Show current provider, or switch between
+  Zen and OpenRouter at runtime. Works over ACP stdio for Paseo.
+  (`agent_service.dart`, `utopic_tui.dart`)
+- **`--openrouter` CLI flag** — Start utopic with OpenRouter as the default
+  provider. (`bin/utopic.dart`)
+- **ACP `session/set_model` support** — The ACP agent now actually sets the
+  model when Paseo sends `session/set_model`, so the model selector dropdown
+  works end-to-end. (`acp_agent.dart`)
+- **ACP param resilience** — `AcpServer._ensureParams()` now handles missing
+  optional-but-required fields (`mcpServers`, string `prompt` conversion,
+  `modelId` type coercion) for better Paseo compatibility.
+  (`acp_server.dart`)
+
 ## 1.1.3
 
 - **Fix TUI replies not visible — scroll viewport dimensions were wrong**

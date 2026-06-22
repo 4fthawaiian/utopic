@@ -12,9 +12,10 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 
 - 🖥️ **Terminal UI** — Non-modal, just type and send. Rainbow pride theming (toggle with `/phobe` or `--phobe`)
 - 🤖 **OpenCode Zen** — Claude, GPT, Gemini, DeepSeek, Qwen pre-configured, live model list on startup
+- 🌐 **OpenRouter** — Use 200+ models via OpenRouter (GPT-4o, Claude Sonnet, Gemini, Llama, Mistral, etc.), switch providers at runtime with `/provider`
 - 🧠 **Skills** — Agent Skills spec (agentskills.io) — drop `skills/<name>/SKILL.md` in your project or `~/.config/utopic/skills/`
 - 📄 **Flexible prompts** — YAML config, `AGENTS.md` (project + global), `--prompt` flag, per-conversation `/prompt`
-- 🔄 **Agent loop** — Multi-iteration tool calling (bash, read, write, edit), configurable via `max_iterations` in `utopic.yaml` (default 10), cancel anytime with `Ctrl+C`
+- 🔄 **Agent loop** — Multi-iteration tool calling (bash, read, write, edit), configurable via `max_iterations` in `config.yaml` (default 10), cancel anytime with `Ctrl+C`
 - 📂 **Conversations** — Multiple conversations, switch between them
 - ⚡ **One-shot mode** — `utopic "prompt"` prints the response and exits
 - 🔌 **ACP Server + Client** — Agent Client Protocol server for external tools, plus client mode to use remote ACP servers as model providers
@@ -23,7 +24,14 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 
 ```bash
 export OPENCODE_API_KEY="sk-..."
-dart run           # run from source
+dart run           # run from source (Zen API)
+```
+
+Or use OpenRouter:
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+dart run -- --openrouter   # run with OpenRouter provider
 ```
 
 Or build once with `dart compile exe bin/utopic.dart -o utopic` and use `./utopic` for all subsequent runs.
@@ -70,6 +78,8 @@ dart run -- "what's in this directory?"
 | `/list` | List conversations (💾 = saved) |
 | `/switch <n>` | Switch conversation |
 | `/config` | Show current configuration |
+| `/provider` | Show current AI provider (Zen / OpenRouter) |
+| `/provider <zen\|openrouter>` | Switch AI provider at runtime |
 | `/phobe` | Toggle pride theming on/off |
 | `/quit` | Exit |
 
@@ -129,14 +139,14 @@ cat ~/.config/utopic/sessions/conv_*.json | head -20
 Built from up to **5 sources** — sources 1–4 are **merged (concatenated)** in order,
 while source 5 acts as a **complete override** that replaces everything above:
 
-1. **Default or YAML** — hardcoded prompt with queer energy, or `system_prompt` in `utopic.yaml`
+1. **Default or YAML** — hardcoded prompt with queer energy, or `system_prompt` in `config.yaml`
 2. **`AGENTS.md` / `AGENT.md`** (case-insensitive, e.g. `agents.md`) — auto-detected in the current directory (first match wins)
 3. **`~/.config/utopic/AGENTS.md`** (or `AGENT.md`, case-insensitive) — global fallback if no project AGENTS.md found
 4. **`--prompt <file>`** — CLI flag to inject a prompt file
 5. **`/prompt <text>`** — per-conversation override (**replaces** all of the above)
 
 ```
-# utopic.yaml
+# config.yaml
 system_prompt: |
   You are Utopic, a coding agent. You are concise and write production-ready code.
 ```
@@ -152,6 +162,10 @@ system_prompt: |
 
 ## Models
 
+Utopic supports **two AI providers** — switch between them with `/provider`:
+
+### OpenCode Zen (default)
+
 Models are fetched from the OpenCode API on startup. Free models available:
 
 - `deepseek-v4-flash-free` — DeepSeek (free)
@@ -162,7 +176,21 @@ Models are fetched from the OpenCode API on startup. Free models available:
 
 Plus paid models from Anthropic, OpenAI, Google, DeepSeek, and more.
 
-Use `/model` to pick one interactively, or `/model <id>` to set directly.
+### OpenRouter
+
+200+ models via [OpenRouter](https://openrouter.ai/models), including:
+
+- `openai/gpt-4o`, `openai/gpt-4o-mini`, `openai/o3-mini`
+- `anthropic/claude-sonnet-4`, `anthropic/claude-3.5-sonnet`
+- `google/gemini-2.0-flash-001`, `google/gemini-2.0-pro-001`
+- `deepseek/deepseek-r1`, `deepseek/deepseek-v3`
+- `meta-llama/llama-3.3-70b-instruct`, `mistralai/mistral-large-2411`
+- And many more — fetched live from the OpenRouter API
+
+⚠️ OpenRouter requires an API key (`openrouter_api_key` in config or `OPENROUTER_API_KEY` env var).
+
+Use `/model` to pick a model interactively, or `/model <id>` to set directly.
+When you select a model from the other provider, Utopic auto-switches providers for you.
 
 ## ACP (Agent Client Protocol)
 
@@ -249,24 +277,34 @@ acp:
 Config is loaded from (in priority order):
 
 1. `$UTOPIC_CONFIG` environment variable
-2. `./utopic.yaml`
+2. `./config.yaml`
 3. `~/.config/utopic/config.yaml`
-4. `~/.utopic.yaml`
+4. `~/.config.yaml`
+
+**`provider`** — which AI provider to use by default: `zen` or `openrouter`.
+Can be overridden at runtime with `/provider` or the `--openrouter` CLI flag.
 
 **`max_iterations`** — maximum rounds of AI + tool calls before the agent stops
 (prevents runaway loops). Default: 10. Increase for complex multi-step tasks.
 
-**Model** — set via `default_model` (e.g. `deepseek-v4-flash-free`).
+**Model (Zen)** — set via `default_model` (e.g. `deepseek-v4-flash-free`).
+
+**Model (OpenRouter)** — set via `default_openrouter_model` (e.g. `openai/gpt-4o`).
+
+**OpenRouter API key** — provide via `OPENROUTER_API_KEY` env var or `openrouter_api_key` in YAML.
+
+**OpenRouter endpoint** — set via `openrouter_endpoint` (default: `https://openrouter.ai/api/v1`).
 
 **ACP server auto-start** — set `acp.enabled: true` to start the server on boot.
 
-**API key** — provide via `OPENCODE_API_KEY` env var or `opencode_api_key` in YAML.
+**API key (Zen)** — provide via `OPENCODE_API_KEY` env var or `opencode_api_key` in YAML.
 
 ## CLI
 
 ```bash
 ./utopic --help
 ./utopic --prompt my-prompt.md     # inject a prompt file
+./utopic --openrouter              # start with OpenRouter provider
 ./utopic --phobe                   # launch without pride theming
 ./utopic --config path/to/yaml       # use a specific config file
 ./utopic --load conv_xxx...          # resume a saved session

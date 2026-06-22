@@ -11,6 +11,7 @@ void main(List<String> args) async {
   String? configPath;
   String? loadSessionId;
   var phobeMode = false;
+  var useOpenRouter = false;
   final positional = <String>[];
 
   for (int i = 0; i < args.length; i++) {
@@ -34,6 +35,10 @@ void main(List<String> args) async {
       phobeMode = true;
       continue;
     }
+    if (args[i] == '--openrouter') {
+      useOpenRouter = true;
+      continue;
+    }
     if (args[i] == '--acp-server') {
       // Handled below after config load
       continue;
@@ -49,7 +54,8 @@ void main(List<String> args) async {
     positional.add(args[i]);
   }
 
-  final config = AppConfig.load(promptFile: promptFile, configPath: configPath);
+  final config = AppConfig.load(promptFile: promptFile, configPath: configPath,
+      provider: useOpenRouter ? AiProvider.openrouter : null);
 
   // One-shot mode: positional arg is the prompt string
   // e.g.  dart run -- "what's 2+2?"   or   ./utopic "refactor this"
@@ -249,6 +255,7 @@ OPTIONS:
   --prompt <path>  Path to a prompt file (appended to system prompt)
   --load <id>      Resume a saved session by ID (see /save + exit message)
   --phobe          Launch in boring mode (no pride theming)
+  --openrouter     Start with OpenRouter provider instead of Zen
   --acp-server     Run in daemon mode (headless ACP server over TCP, no TUI)
   --acp-stdio      Run in daemon mode (headless ACP server over stdin/stdout)
   --help / -h      Show this help
@@ -256,12 +263,13 @@ OPTIONS:
 CONFIG:
   The agent looks for config in order:
   1. \$UTOPIC_CONFIG environment variable
-  2. ./utopic.yaml
+  2. ./config.yaml
   3. ~/.config/utopic/config.yaml
-  4. ~/.utopic.yaml
+  4. ~/.config.yaml
 
 ENVIRONMENT:
-  OPENCODE_API_KEY  API key for OpenCode Zen models
+  OPENCODE_API_KEY     API key for OpenCode Zen models
+  OPENROUTER_API_KEY   API key for OpenRouter models (required for OpenRouter provider)
 
 KEYS (interactive mode):
   Enter           Send message
@@ -273,8 +281,10 @@ KEYS (interactive mode):
   Ctrl+D          Quit (like normal terminal EOF)
   Ctrl+C          Interrupt / cancel (passes through)
 
-PRE-CONFIGURED MODELS (via OpenCode Zen):
-  ${ZenModels.all.map((m) => '${m.id}${m.isFree ? ' (free)' : ''}').join('\n  ')}
+PRE-CONFIGURED MODELS:
+  Zen API:  ${ZenModels.all.length}+ models (default)
+  OpenRouter: ${ZenModels.openrouterAll.length}+ models
+  Use /models to list, /model <id> to switch, /provider to toggle providers
 
 ACP (Agent Client Protocol):
   Built-in ACP server for integration with other tools
@@ -284,7 +294,7 @@ ACP (Agent Client Protocol):
 
 SYSTEM PROMPT:
   Sources (merged in order):
-    1. Default or system_prompt in utopic.yaml
+    1. Default or system_prompt in config.yaml
     2. AGENTS.md in cwd, or ~/.config/utopic/AGENTS.md as fallback
     3. --prompt <file> (CLI flag)
     4. /prompt <text> (per-conversation override, TUI only)

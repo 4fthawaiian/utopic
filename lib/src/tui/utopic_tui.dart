@@ -31,15 +31,27 @@ class UtopicTuiApp extends TuiApp {
   final String? _loadSessionId;
 
   /// Models available for selection — ACP remote models if connected,
-  /// otherwise the built-in Zen models.
+  /// otherwise both Zen and OpenRouter models combined.
   List<Map<String, dynamic>> get _modelList {
     if (_agent.isUsingAcp && _agent.ai is AcpAiService) {
       final acp = _agent.ai as AcpAiService;
       final acpModels = acp.availableModels;
       if (acpModels.isNotEmpty) return acpModels;
     }
-    // Fall back to Zen models (or empty list).
-    return ZenModels.all.map((m) => {'value': m.id, 'name': m.id}).toList();
+    // Combine both Zen and OpenRouter models, deduplicating by ID,
+    // and show which API serves each model
+    final seen = <String>{};
+    final result = <Map<String, dynamic>>[];
+    for (final m in ZenModels.all) {
+      seen.add(m.id);
+      result.add({'value': m.id, 'name': '${m.id} (${m.provider}, Zen)'});
+    }
+    for (final m in ZenModels.openrouterAll) {
+      if (!seen.contains(m.id)) {
+        result.add({'value': m.id, 'name': '${m.id} (${m.provider}, OpenRouter)'});
+      }
+    }
+    return result;
   }
 
   /// Tick 6×/s for smooth animation of the thinking spinner.
@@ -230,7 +242,9 @@ class UtopicTuiApp extends TuiApp {
           '    /new          New conversation',
           '    /model        Interactive model selector',
           '    /model <id>   Switch model by ID',
-          '    /models       List models',
+          '    /models       List ALL models (Zen API + OpenRouter)',
+          '    /provider     Show current provider',
+          '    /provider <zen|openrouter>  Switch AI provider',
           '    /prompt       Show current prompt override',
           '    /prompt <t>   Set per-conversation system prompt',
           '    /acp          Toggle ACP server (accept connections)',
@@ -244,7 +258,10 @@ class UtopicTuiApp extends TuiApp {
           '    /phobe        Toggle phobe mode (remove pride theming)',
           '    /quit         Exit',
           '',
-          '  MODELS:',
+          '  PROVIDER: ${_agent.currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}  ·  ${_agent.ai.currentModel}',
+          '',
+          '  MODELS (${_modelList.length} total):',
+          '    (◀ = active model, /model <id> to switch, /models to list all)',
           for (final m in _modelList)
             '    ${_agent.ai.currentModel == m['value'] ? '◀' : ' '} ${m['name']}',
           '',
@@ -270,7 +287,9 @@ class UtopicTuiApp extends TuiApp {
       case 'model':
         if (parts.length > 1) {
           final modelId = parts[1];
-          if (_modelList.any((m) => m['value'] == modelId)) {
+          final inZen = ZenModels.get(modelId) != null;
+          final inOr = ZenModels.openrouterGet(modelId) != null;
+          if (_modelList.any((m) => m['value'] == modelId) || inZen || inOr) {
             _agent.setModel(modelId);
             _status = 'Model: $modelId';
           } else {
@@ -281,16 +300,61 @@ class UtopicTuiApp extends TuiApp {
         }
         return;
 
+      case 'provider':
+        if (parts.length > 1) {
+          final target = parts[1].toLowerCase();
+          if (target == 'openrouter') {
+            if (_agent.currentProvider == AiProvider.openrouter) {
+              _status = 'Already using OpenRouter';
+            } else {
+              _status = 'Switching to OpenRouter...';
+              _agent.switchToOpenrouter().then((_) {
+                _status = 'OpenRouter: ${_agent.ai.currentModel}';
+                _refreshChat(context);
+              }).catchError((e) {
+                _status = 'Switch failed: $e';
+              });
+            }
+          } else if (target == 'zen') {
+            if (_agent.currentProvider == AiProvider.zen) {
+              _status = 'Already using Zen';
+            } else {
+              _status = 'Switching to Zen...';
+              _agent.switchToZen().then((_) {
+                _status = 'Zen: ${_agent.ai.currentModel}';
+                _refreshChat(context);
+              }).catchError((e) {
+                _status = 'Switch failed: $e';
+              });
+            }
+          } else {
+            _status = 'Unknown provider: $target  (use zen or openrouter)';
+          }
+        } else {
+          final name = _agent.currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen';
+          _status = 'Provider: $name  ·  ${_agent.ai.currentModel}  (/provider <zen|openrouter>)';
+        }
+        return;
+
       case 'models':
-        final lines = <String>['', ' Available Models:', ''];
-        for (final m in _modelList) {
-          final active =
-              _agent.ai.currentModel == m['value'] ? ' ◀ ACTIVE' : '';
-          lines.add('   ${m['name']}$active');
+        final provider = _agent.currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen';
+        final lines = <String>['', ' All Models:', '   (provider: $provider — /provider to switch)', ''];
+        // Zen section
+        lines.add(' ── Zen API ──');
+        for (final m in ZenModels.all) {
+          final active = _agent.ai.currentModel == m.id ? ' ◀ ACTIVE' : '';
+          lines.add('   ${m.id} (${m.provider}, Zen)$active');
+        }
+        lines.add('');
+        // OpenRouter section
+        lines.add(' ── OpenRouter ──');
+        for (final m in ZenModels.openrouterAll) {
+          final active = _agent.ai.currentModel == m.id ? ' ◀ ACTIVE' : '';
+          lines.add('   ${m.id} (${m.provider}, OpenRouter)$active');
         }
         _scroll.setLines(lines);
         _scroll.scrollTop();
-        _status = '${_modelList.length} models';
+        _status = '${ZenModels.all.length + ZenModels.openrouterAll.length} models total (provider: $provider)';
         return;
 
       case 'acp':

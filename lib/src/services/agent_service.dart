@@ -20,6 +20,7 @@ class AgentService implements AcpAgentDelegate {
   AcpServer? _acpServer;
   AcpDartConnection? _acpConnection;
   ZenAiService? _zenFallback;
+  OpenRouterAiService? _openrouterFallback;
   final SessionStore _sessionStore = SessionStore();
   String? _cwd;
   bool _cancelRequested = false;
@@ -53,7 +54,17 @@ class AgentService implements AcpAgentDelegate {
   final SkillLoader _skills = SkillLoader();
 
   AgentService({required this.config, AiService? aiService})
-      : ai = aiService ?? ZenAiService(config: config);
+      : ai = aiService ?? _createDefaultAi(config);
+
+  /// Create the default AI service based on the config provider setting.
+  static AiService _createDefaultAi(AppConfig cfg) {
+    switch (cfg.provider) {
+      case AiProvider.openrouter:
+        return OpenRouterAiService(config: cfg);
+      case AiProvider.zen:
+        return ZenAiService(config: cfg);
+    }
+  }
 
   /// Build the system prompt from all sources:
   ///   1. Default hardcoded prompt
@@ -136,8 +147,31 @@ class AgentService implements AcpAgentDelegate {
   Future<void> initialize() async {
     _cwd = Directory.current.path;
 
-    // Fetch available models and skills
-    ai.fetchModels();
+    // Fetch available models from both providers so Paseo and the TUI
+    // always see a complete list of models regardless of which provider
+    // is currently active.
+    // Always try Zen models
+    try {
+      if (ai is ZenAiService) {
+        await (ai as ZenAiService).fetchModels();
+      } else {
+        // Use a temporary ZenAiService to fetch models without switching
+        final zen = ZenAiService(config: config);
+        await zen.fetchModels();
+      }
+    } catch (_) {
+      // Fall back to defaults
+    }
+
+    // Always try OpenRouter models too (silently if no key configured)
+    try {
+      if (config.openrouterApiKey != null && config.openrouterApiKey!.isNotEmpty) {
+        final or = OpenRouterAiService(config: config);
+        await or.fetchModels();
+      }
+    } catch (_) {
+      // Fall back to defaults
+    }
     _skills.loadAll();
 
     final sysPrompt = buildSystemPrompt();
@@ -594,12 +628,14 @@ class AgentService implements AcpAgentDelegate {
           content: '**Available Commands:**\n\n'
               '`/help` - Show this help message\n'
               '`/model <name>` - Switch AI model\n'
+              '`/provider` - Show current provider (Zen/OpenRouter)\n'
+              '`/provider <zen|openrouter>` - Switch provider\n'
               '`/new` - Start a new conversation\n'
               '`/list` - List all conversations\n'
               '`/switch <id>` - Switch to a conversation\n'
               '`/clear` - Clear current conversation\n'
               '`/acp` - Toggle ACP server status\n'
-              '`/models` - List available models\n'
+              '`/models` - List ALL available models (Zen + OpenRouter)\n'
               '`/prompt <text>` - Set per-conversation system prompt\n'
               '`/quit` - Exit the agent\n'
               '`/phobe` - Toggle phobe mode (remove pride theming)'
@@ -624,11 +660,19 @@ class AgentService implements AcpAgentDelegate {
       case '/model':
         if (parts.length > 1) {
           final modelId = parts[1];
-          if (ZenModels.get(modelId) != null) {
+          // Check both model lists
+          final inZen = ZenModels.get(modelId) != null;
+          final inOr = ZenModels.openrouterGet(modelId) != null;
+          if (inZen || inOr) {
+            final prevProvider = currentProvider;
             setModel(modelId);
+            final newProvider = currentProvider;
+            final providerNote = prevProvider != newProvider
+                ? ' (auto-switched to **${newProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}**)'
+                : '';
             final msg = Message(
               role: 'assistant',
-              content: '✅ Switched to model: `$modelId`',
+              content: '✅ Switched to `$modelId`$providerNote',
             );
             _activeConv!.addMessage(msg);
           } else {
@@ -643,11 +687,74 @@ class AgentService implements AcpAgentDelegate {
         break;
 
       case '/models':
-        final buffer = StringBuffer('**Available Models:**\n\n');
+        final buffer = StringBuffer();
+        buffer.writeln('**Available Models:**\n');
+        buffer.writeln('_Current provider: `${currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}` — '
+            'switch via `/provider <zen|openrouter>`_');
+        buffer.writeln('');
+
+        // Zen models section
+        buffer.writeln('**Zen API:**');
         for (final model in ZenModels.all) {
-          buffer.writeln('- `${model.id}` (${model.provider})');
+          final active = model.id == ai.currentModel ? ' ◀' : '';
+          buffer.writeln('- `${model.id}` (${model.provider}, Zen)$active');
+        }
+
+        buffer.writeln('');
+        // OpenRouter models section
+        buffer.writeln('**OpenRouter:**');
+        for (final model in ZenModels.openrouterAll) {
+          final active = model.id == ai.currentModel ? ' ◀' : '';
+          buffer.writeln('- `${model.id}` (${model.provider}, OpenRouter)$active');
         }
         _activeConv!.addMessage(Message(role: 'assistant', content: buffer.toString()));
+        break;
+
+      case '/provider':
+        if (parts.length > 1) {
+          final target = parts[1].toLowerCase();
+          if (target == 'openrouter') {
+            if (ai is OpenRouterAiService) {
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '⚠️ Already using OpenRouter (`${ai.currentModel}`)',
+              ));
+            } else {
+              await switchToOpenrouter();
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '✅ Switched to **OpenRouter** (`${ai.currentModel}`)\n'
+                    'Use `/models` to see available models, `/model <id>` to select one.',
+              ));
+            }
+          } else if (target == 'zen') {
+            if (ai is ZenAiService) {
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '⚠️ Already using Zen (`${ai.currentModel}`)',
+              ));
+            } else {
+              await switchToZen();
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '✅ Switched to **Zen** (`${ai.currentModel}`)\n'
+                    'Use `/models` to see available models, `/model <id>` to select one.',
+              ));
+            }
+          } else {
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: '⚠️ Unknown provider: `$target`. Use `zen` or `openrouter`.',
+            ));
+          }
+        } else {
+          _activeConv!.addMessage(Message(
+            role: 'assistant',
+            content: '**Current provider:** `${currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}`\n'
+                '**Current model:** `${ai.currentModel}`\n\n'
+                'Use `/provider <zen|openrouter>` to switch.',
+          ));
+        }
         break;
 
       case '/acp':
@@ -723,9 +830,12 @@ class AgentService implements AcpAgentDelegate {
         _activeConv!.addMessage(Message(
           role: 'assistant',
           content: '**Configuration:**\n\n'
+              '- Provider: `${currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}`\n'
               '- Model: `${ai.currentModel}`\n'
               '- Zen endpoint: `${config.zenEndpoint}`\n'
-              '- API key: ${config.opencodeApiKey != null ? '✅ set' : '❌ not set'}\n'
+              '- OpenRouter endpoint: `${config.openrouterEndpoint}`\n'
+              '- Zen API key: ${config.opencodeApiKey != null ? '✅ set' : '❌ not set'}\n'
+              '- OpenRouter API key: ${config.openrouterApiKey != null ? '✅ set' : '❌ not set'}\n'
               '- ACP: ${isUsingAcp ? "✅ provider (${ai.currentModel})" : (isAcpRunning ? "✅ server running" : "❌ stopped")}\n'
               '- CWD: `$_cwd`\n'
               '- Prompt file: ${config.promptFile ?? "(none)"}\n'
@@ -816,9 +926,32 @@ class AgentService implements AcpAgentDelegate {
   bool get isUsingAcp => ai is AcpAiService;
 
   /// Set the active model and sync the conversation's context limit.
+  /// If the model belongs to the other provider, auto-switch providers.
   /// Call this instead of setting [ai.currentModel] directly to keep
   /// the context indicator accurate.
   void setModel(String modelId) {
+    // Auto-switch provider if needed
+    final inZen = ZenModels.get(modelId) != null;
+    final inOr = ZenModels.openrouterGet(modelId) != null;
+    if (inOr && ai is! OpenRouterAiService && !isUsingAcp) {
+      // Model is OpenRouter but we're on Zen — switch to OpenRouter first
+      // We do this synchronously-ish: if we already have a fallback, swap it now
+      if (_openrouterFallback != null) {
+        ai = _openrouterFallback!;
+        _openrouterFallback = null;
+      } else {
+        // Kick off async switch, but set the model anyway for when it completes
+        switchToOpenrouter();
+      }
+    } else if (inZen && ai is! ZenAiService && !isUsingAcp) {
+      // Model is Zen but we're on OpenRouter — switch to Zen first
+      if (_zenFallback != null) {
+        ai = _zenFallback!;
+        _zenFallback = null;
+      } else {
+        switchToZen();
+      }
+    }
     ai.currentModel = modelId;
     if (_activeConv != null) {
       _activeConv!.contextLimit = ZenModels.contextLimitFor(modelId);
@@ -880,14 +1013,70 @@ class AgentService implements AcpAgentDelegate {
     _notifyUpdates();
   }
 
-  /// Disconnect from the remote ACP server and restore the Zen API provider.
+  /// Disconnect from the remote ACP server and restore the previous provider.
   Future<void> disconnectFromAcp() async {
     if (_acpConnection != null) {
       await _acpConnection!.disconnect();
       _acpConnection = null;
     }
-    ai = _zenFallback ?? ZenAiService(config: config);
+    // Restore the fallback, preferring OpenRouter over Zen
+    if (_openrouterFallback != null) {
+      ai = _openrouterFallback!;
+      _openrouterFallback = null;
+    } else {
+      ai = _zenFallback ?? ZenAiService(config: config);
+    }
     _zenFallback = null;
+    _notifyUpdates();
+  }
+
+  // ─── Provider switching (Zen ↔ OpenRouter) ──────────────────────────
+
+  /// Which AI provider is currently active.
+  AiProvider get currentProvider {
+    if (ai is OpenRouterAiService) return AiProvider.openrouter;
+    if (ai is ZenAiService) return AiProvider.zen;
+    // ACP or other — check the fallback
+    if (_openrouterFallback != null) return AiProvider.openrouter;
+    return AiProvider.zen;
+  }
+
+  /// Switch to OpenRouter provider.
+  Future<void> switchToOpenrouter() async {
+    if (ai is OpenRouterAiService) return; // already there
+    // Save current non-ACP service as fallback
+    if (ai is ZenAiService) {
+      _zenFallback = ai as ZenAiService;
+    }
+    // Create or reuse existing OpenRouter service
+    if (_openrouterFallback != null) {
+      ai = _openrouterFallback!;
+      _openrouterFallback = null;
+    } else {
+      ai = OpenRouterAiService(config: config);
+      // Fetch models
+      try {
+        await (ai as OpenRouterAiService).fetchModels();
+      } catch (_) {}
+    }
+    _notifyUpdates();
+  }
+
+  /// Switch to Zen provider.
+  Future<void> switchToZen() async {
+    if (ai is ZenAiService) return; // already there
+    // Save current non-ACP service as fallback
+    if (ai is OpenRouterAiService) {
+      _openrouterFallback = ai as OpenRouterAiService;
+    }
+    // Create or reuse existing Zen service
+    if (_zenFallback != null) {
+      ai = _zenFallback!;
+      _zenFallback = null;
+    } else {
+      ai = ZenAiService(config: config);
+      ai.fetchModels();
+    }
     _notifyUpdates();
   }
 
@@ -947,6 +1136,11 @@ class AgentService implements AcpAgentDelegate {
   // ─── AcpAgentDelegate implementation ─────────────────────────────────
 
   @override
+  void onSetModel(String modelId) {
+    setModel(modelId);
+  }
+
+  @override
   Map<String, dynamic> onInitialize() {
     return {
       'server_name': 'utopic-agent',
@@ -958,16 +1152,35 @@ class AgentService implements AcpAgentDelegate {
   @override
   Map<String, dynamic> onNewSession(String cwd) {
     final sessionId = 'session_${DateTime.now().millisecondsSinceEpoch}';
-    return {
-      'id': sessionId,
-      'cwd': cwd,
-      'model': ai.currentModel,
-      'models': ZenModels.all.map((m) => {
+
+    // Combine Zen + OpenRouter models, deduplicating by ID
+    final seen = <String>{};
+    final allModels = <Map<String, dynamic>>[];
+    for (final m in ZenModels.all) {
+      seen.add(m.id);
+      allModels.add({
         'id': m.id,
         'name': m.displayName,
         'description': '${m.provider} · ${m.contextLimit ~/ 1000}K context',
         'contextLimit': m.contextLimit,
-      }).toList(),
+      });
+    }
+    for (final m in ZenModels.openrouterAll) {
+      if (!seen.contains(m.id)) {
+        allModels.add({
+          'id': m.id,
+          'name': m.displayName,
+          'description': 'OpenRouter · ${m.contextLimit ~/ 1000}K context',
+          'contextLimit': m.contextLimit,
+        });
+      }
+    }
+
+    return {
+      'id': sessionId,
+      'cwd': cwd,
+      'model': ai.currentModel,
+      'models': allModels,
     };
   }
 
@@ -1000,6 +1213,26 @@ class AgentService implements AcpAgentDelegate {
 
     conv.addMessage(Message(role: 'user', content: prompt));
     _notifyUpdates();
+
+    // Handle slash commands (e.g. /models, /model, /provider) through the
+    // command handler so they work the same whether sent via TUI or ACP.
+    if (prompt.startsWith('/')) {
+      await _handleCommand(prompt);
+      // Send the response as a session update so Paseo sees it
+      final lastMsg = conv.messages.last;
+      if (lastMsg.content.isNotEmpty) {
+        await connection.sessionUpdate(SessionNotification(
+          sessionId: sessionId,
+          update: AgentMessageChunkSessionUpdate(
+            content: TextContentBlock(text: lastMsg.content),
+          ),
+        ));
+      }
+      return {
+        'inputTokens': 0,
+        'outputTokens': 0,
+      };
+    }
 
     // Run the agent loop with ACP streaming enabled — it sends intermediate
     // thought, tool-call, and text updates so the client (Paseo) can display

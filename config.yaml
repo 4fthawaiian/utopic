@@ -2,9 +2,14 @@
 #
 # Config loading order:
 #   1. $UTOPIC_CONFIG env var
-#   2. ./utopic.yaml
+#   2. ./config.yaml
 #   3. ~/.config/utopic/config.yaml
-#   4. ~/.utopic.yaml
+#   4. ~/.config.yaml
+
+# ─── Provider ────────────────────────────────────────────────────────
+# Which AI provider to use by default: "zen" or "openrouter"
+# Can also be switched at runtime with /provider command
+provider: "zen"
 
 # OpenCode API Key (or set OPENCODE_API_KEY env var)
 # opencode_api_key: "sk-..."
@@ -14,6 +19,15 @@ default_model: "deepseek-v4-flash-free"
 
 # OpenCode Zen API endpoint
 zen_endpoint: "https://opencode.ai/zen"
+
+# ─── OpenRouter ─────────────────────────────────────────────────────
+# To use OpenRouter models (e.g. gpt-4o, claude-sonnet-4 via OpenRouter):
+#   1. Set openrouter_api_key or OPENROUTER_API_KEY env var
+#   2. Set provider: "openrouter" or use --openrouter flag
+#   3. Use /provider openrouter at runtime
+# openrouter_api_key: "sk-or-..."
+# openrouter_endpoint: "https://openrouter.ai/api/v1"
+# default_openrouter_model: "openai/gpt-4o"
 
 # Custom system prompt — replaces the default if set
 # system_prompt: |

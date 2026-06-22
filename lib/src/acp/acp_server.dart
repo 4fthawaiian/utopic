@@ -153,14 +153,50 @@ class _ServerConnection {
   /// require them.
   ///
   /// Workaround for `acp_dart` crashing when `params` is null (e.g. bare
-  /// `{"method":"initialize"}` with no params key).
+  /// `{"method":"initialize"}` with no params key), or when required
+  /// sub-fields like `mcpServers` or `prompt` are missing/wrong type.
+  ///
+  /// This is needed because some ACP clients (including Paseo) may omit
+  /// optional-looking but actually-required fields in their JSON-RPC requests.
   AcpStream _ensureParams(AcpStream original) {
     final fixed = original.readable.map((msg) {
-      if (msg.containsKey('method') && !msg.containsKey('params')) {
-        msg['params'] = msg['method'] == 'initialize'
+      final method = msg['method'] as String?;
+      if (method == null) return msg;
+
+      // If params is completely missing, add empty map
+      if (!msg.containsKey('params')) {
+        msg['params'] = method == 'initialize'
             ? <String, dynamic>{'protocolVersion': 1}
             : <String, dynamic>{};
       }
+
+      final params = msg['params'];
+      if (params is! Map<String, dynamic>) return msg;
+
+      // session/new requires mcpServers but some clients omit it
+      if (method == 'session/new' && !params.containsKey('mcpServers')) {
+        params['mcpServers'] = <dynamic>[];
+      }
+
+      // session/prompt expects prompt as a List<ContentBlock>, but some
+      // clients send a plain string. Convert it.
+      if (method == 'session/prompt' && params.containsKey('prompt')) {
+        final prompt = params['prompt'];
+        if (prompt is String) {
+          params['prompt'] = <Map<String, dynamic>>[
+            {'type': 'text', 'text': prompt},
+          ];
+        }
+      }
+
+      // session/set_model needs modelId as a required field
+      if (method == 'session/set_model' &&
+          params.containsKey('modelId') &&
+          params['modelId'] is! String) {
+        // Ensure modelId is a string
+        params['modelId'] = params['modelId'].toString();
+      }
+
       return msg;
     });
     return AcpStream(readable: fixed, writable: original.writable);

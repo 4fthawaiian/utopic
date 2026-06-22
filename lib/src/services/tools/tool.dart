@@ -13,7 +13,9 @@ abstract class Tool {
   /// Returns the result as a string.
   Future<String> execute(Map<String, dynamic> args);
 
-  /// Describes this tool in OpenAI-compatible format.
+  /// Describes this tool for the Responses API (OpenCode Zen).
+  /// Produces the flat format that the Responses API expects:
+  ///   {type, name, description, parameters}
   Map<String, dynamic> toJson() => {
     'type': 'function',
     'name': name,
@@ -22,6 +24,23 @@ abstract class Tool {
       'type': 'object',
       'properties': parameters,
       if (required.isNotEmpty) 'required': required,
+    },
+  };
+
+  /// Describes this tool for the Chat Completions API (OpenRouter/OpenAI).
+  /// Wraps the function details in a `function` field as required by
+  /// the Chat Completions API format:
+  ///   {type: "function", function: {name, description, parameters}}
+  Map<String, dynamic> toChatJson() => {
+    'type': 'function',
+    'function': {
+      'name': name,
+      'description': description,
+      'parameters': {
+        'type': 'object',
+        'properties': parameters,
+        if (required.isNotEmpty) 'required': required,
+      },
     },
   };
 }

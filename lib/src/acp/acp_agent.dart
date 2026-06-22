@@ -135,6 +135,8 @@ class AcpAgent implements Agent {
   @override
   Future<SetSessionModelResponse?>? setSessionModel(
       SetSessionModelRequest params) async {
+    // Actually set the model on the delegate so Paseo's model selector works
+    delegate.onSetModel(params.modelId);
     return SetSessionModelResponse();
   }
 
@@ -185,4 +187,8 @@ abstract class AcpAgentDelegate {
 
   /// Called on `session/list`. Returns list of session info maps.
   List<Map<String, dynamic>> onListSessions();
+
+  /// Called on `session/set_model`. Sets the active model.
+  /// Default no-op — subclasses can override.
+  void onSetModel(String modelId) {}
 }
