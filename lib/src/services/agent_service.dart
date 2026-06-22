@@ -362,26 +362,22 @@ class AgentService implements AcpAgentDelegate {
           ));
           _notifyUpdates();
 
-          // Stream the AI's reasoning / commentary as a thought update
+          // Stream the AI's reasoning / commentary as a message chunk
           // BEFORE the tool call notifications, so the client sees the
-          // "why" behind the tool calls.
+          // "why" behind the tool calls as actual message text (not hidden
+          // in the thinking block).
           if (result.content.isNotEmpty) {
-            await sendAcpUpdate(AgentThoughtChunkSessionUpdate(
-              content: TextContentBlock(
-                text: '💡 **Reasoning:** ${result.content}',
-              ),
+            await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+              content: TextContentBlock(text: result.content),
             ));
           }
 
-          // Stream tool call notifications so the client can see them
+          // Stream tool call notifications so the client can see them.
+          // Tool calls are sent as structured ToolCallSessionUpdate (not thought
+          // updates), so the client (Paseo) renders them in the tool call UI
+          // instead of cluttering the thinking block.
           for (final tc in result.toolCalls) {
             final locationInfo = _toolLocationsFor(tc.name, tc.arguments);
-            final pathHint = locationInfo.isNotEmpty
-                ? ' on `${locationInfo.first.path}`'
-                : '';
-            await sendThought(
-              '🔧 **${tc.name}**$pathHint — _preparing to execute…_',
-            );
 
             await sendAcpUpdate(ToolCallSessionUpdate(
               toolCallId: tc.id,
@@ -443,15 +439,10 @@ class AgentService implements AcpAgentDelegate {
             ));
           }
 
-          // Send final usage update with cumulative token counts
+          // Send final usage update with cumulative token counts — this
+          // already communicates completion, tokens, and elapsed info to
+          // the client, no need for a separate "Done" thought.
           await sendUsage();
-
-          // Send a final summary thought
-          final elapsed = stopwatch.elapsed;
-          await sendThought(
-            '✅ **Done** (${result.inputTokens + result.outputTokens} tokens · '
-            '${elapsed.inSeconds}s)',
-          );
           return result;
         }
       }

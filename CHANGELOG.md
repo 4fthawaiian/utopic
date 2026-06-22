@@ -14,6 +14,18 @@
   `continue` statement that skipped the "Utopic" header and any content for
   assistant messages with tool calls. Now the header always shows, reasoning
   text is displayed before the tool call list. (`utopic_tui.dart`)
+- **Stream AI reasoning as message text, not thinking blocks** — When the AI
+  returns commentary alongside tool calls, Utopic now sends it as
+  `AgentMessageChunkSessionUpdate` (visible message text) instead of
+  `AgentThoughtChunkSessionUpdate` (hidden in thinking block). This means
+  Paseo users see the "why" behind tool calls as readable assistant text.
+  (`agent_service.dart`)
+- **Remove redundant thought updates during tool execution** — Dropped the
+  individual "🔧 **toolname** — preparing to execute…" thoughts and the final
+  "✅ **Done** (tokens · seconds)" summary. The usage update already
+  communicates completion, and the tool call structured updates give Paseo
+  all the info it needs without cluttering the thinking timeline.
+  (`agent_service.dart`)
 
 ## 1.1.2
 

@@ -84,6 +84,27 @@ Expected output (single line of JSON):
 
 (A full session/prompt test requires a multi-step exchange — use Paseo for that.)
 
+## What Paseo Sees Over ACP
+
+When you send a prompt to Utopic via ACP, it streams back **session updates**
+that Paseo renders as a rich timeline:
+
+| Update Type | What Paseo Shows |
+|---|---|
+| `AgentThoughtChunkSessionUpdate` | **Thinking indicators** — "Analyzing your request", "Processing results (round 2/10)" |
+| `AgentMessageChunkSessionUpdate` | **Assistant text** — AI reasoning, commentary, and final responses |
+| `ToolCallSessionUpdate` | **Tool call cards** — read, write, edit, bash with file paths and status |
+| `ToolCallUpdateSessionUpdate` | **Tool results** — output previews (truncated at 500 chars) |
+| `UsageUpdate` | **Token usage bar** — context window percentage + cumulative tokens |
+
+This means Paseo shows:
+- ✨ A smooth **thinking → reasoning → tool calls → result** flow
+- 🧠 The AI's commentary **before** tool calls as actual text (not hidden in thoughts)
+- 🔧 Tool calls with their file paths, status, and result previews
+- 📊 A token usage bar that grows across multiple rounds
+
+No extra configuration needed — it just works! 💖
+
 ## Troubleshooting
 
 - **No response / empty output**: Make sure you're sending newline-delimited
