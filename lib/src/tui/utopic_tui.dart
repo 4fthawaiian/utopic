@@ -262,6 +262,7 @@ class UtopicTuiApp extends TuiApp {
           '    /load <id>    Load a saved conversation',
           '    /list         List conversations',
           '    /switch <n>   Switch conversation',
+          '    /lmstudio     Re-fetch LM Studio models and list them',
           '    /phobe        Toggle phobe mode (remove pride theming)',
           '    /quit         Exit',
           '',
@@ -526,6 +527,22 @@ class UtopicTuiApp extends TuiApp {
             _status = '${saved.length} saved sessions';
           }
         }
+        return;
+
+      case 'lmstudio':
+        _status = 'Refreshing LM Studio models...';
+        _agent
+            .refreshLmStudioModels()
+            .then((_) {
+              final count = ZenModels.lmStudioAll.length;
+              final models = ZenModels.lmStudioAll
+                  .map((m) => m.id)
+                  .join(', ');
+              _status = 'LM Studio: $count models ($models)';
+            })
+            .catchError((e) {
+              _status = 'LM Studio refresh failed: $e';
+            });
         return;
 
       case 'phobe':

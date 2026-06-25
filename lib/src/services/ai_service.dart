@@ -610,12 +610,14 @@ class LmStudioAiService extends AiService {
   @override
   Future<List<ZenModel>> fetchModels() async {
     try {
-      final response = await _client.get(
-        Uri.parse('${config.lmStudioEndpoint}/models'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      );
+      final response = await _client
+          .get(
+            Uri.parse('${config.lmStudioEndpoint}/models'),
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -623,9 +625,13 @@ class LmStudioAiService extends AiService {
         ZenModels.mergeLmStudioModels(
           apiModels.cast<Map<String, dynamic>>(),
         );
+      } else {
+        stderr.writeln(
+          '[utopic] LM Studio /models returned HTTP ${response.statusCode}',
+        );
       }
-    } catch (_) {
-      // Fall back to defaults
+    } catch (e) {
+      stderr.writeln('[utopic] LM Studio fetchModels error: $e');
     }
 
     return ZenModels.lmStudioAll;

@@ -54,6 +54,9 @@ class AgentService implements AcpAgentDelegate {
 
   final SkillLoader _skills = SkillLoader();
 
+  /// Track active ACP sessions so we can push model list updates to Paseo.
+  final Map<String, AgentSideConnection> _acpSessions = {};
+
   AgentService({required this.config, AiService? aiService})
       : ai = aiService ?? _createDefaultAi(config);
 
@@ -174,8 +177,8 @@ class AgentService implements AcpAgentDelegate {
         final zen = ZenAiService(config: config);
         await zen.fetchModels();
       }
-    } catch (_) {
-      // Fall back to defaults
+    } catch (e) {
+      stderr.writeln('[utopic] Zen model fetch failed: $e');
     }
 
     // Always try OpenRouter models too (silently if no key configured)
@@ -184,16 +187,20 @@ class AgentService implements AcpAgentDelegate {
         final or = OpenRouterAiService(config: config);
         await or.fetchModels();
       }
-    } catch (_) {
-      // Fall back to defaults
+    } catch (e) {
+      stderr.writeln('[utopic] OpenRouter model fetch failed: $e');
     }
 
-    // Always try LM Studio models (silently — fine if LM Studio isn't running)
+    // Always try LM Studio models (with timeout — remote endpoints can be slow)
     try {
       final lm = LmStudioAiService(config: config);
-      await lm.fetchModels();
-    } catch (_) {
-      // LM Studio probably isn't running, fall back to defaults
+      await lm.fetchModels().timeout(const Duration(seconds: 10));
+      final lmCount = ZenModels.lmStudioAll.length;
+      stderr.writeln('[utopic] LM Studio: $lmCount model(s) loaded from ${config.lmStudioEndpoint}');
+    } catch (e) {
+      stderr.writeln('[utopic] LM Studio model fetch failed (endpoint: ${config.lmStudioEndpoint}): $e');
+      stderr.writeln('[utopic]   Only "local-model" will be shown. Check your lm_studio_endpoint in config.yaml');
+      stderr.writeln('[utopic]   Expected format: http://host:port/v1  (note: /v1 suffix is required)');
     }
     _skills.loadAll();
 
@@ -661,7 +668,8 @@ class AgentService implements AcpAgentDelegate {
               '`/models` - List ALL available models\n'
               '`/prompt <text>` - Set per-conversation system prompt\n'
               '`/quit` - Exit the agent\n'
-              '`/phobe` - Toggle phobe mode (remove pride theming)'
+              '`/phobe` - Toggle phobe mode (remove pride theming)\n'
+              '`/lmstudio` - Re-fetch LM Studio models and list them\n'
               '`/config` - Show current configuration',
         );
         _activeConv!.addMessage(msg);
@@ -683,12 +691,13 @@ class AgentService implements AcpAgentDelegate {
       case '/model':
         if (parts.length > 1) {
           final modelId = parts[1];
-          // Check both model lists
+          // Check all model lists (Zen, OpenRouter, and LM Studio)
           final inZen = ZenModels.get(modelId) != null;
           final inOr = ZenModels.openrouterGet(modelId) != null;
-          if (inZen || inOr) {
+          final inLm = ZenModels.lmStudioGet(modelId) != null;
+          if (inZen || inOr || inLm) {
             final prevProvider = currentProvider;
-            setModel(modelId);
+            await setModel(modelId);
             final newProvider = currentProvider;
             final providerNote = prevProvider != newProvider
                 ? ' (auto-switched to **${_providerDisplayName(newProvider)}**)'
@@ -818,6 +827,30 @@ class AgentService implements AcpAgentDelegate {
             content: '✅ ACP server started on port ${config.acp.port}',
           ));
         }
+        break;
+
+      case '/lmstudio':
+        _activeConv!.addMessage(Message(
+          role: 'assistant',
+          content: '🔄 Re-fetching LM Studio models from `${config.lmStudioEndpoint}`...',
+        ));
+        _notifyUpdates();
+        // Re-fetch models
+        final oldCount = ZenModels.lmStudioAll.length;
+        try {
+          await refreshLmStudioModels();
+        } catch (_) {}
+        final newCount = ZenModels.lmStudioAll.length;
+        final modelsList = ZenModels.lmStudioAll
+            .map((m) => '  - `${m.id}`')
+            .join('\n');
+        final changed = oldCount != newCount ? ' (was $oldCount before)' : '';
+        _activeConv!.addMessage(Message(
+          role: 'assistant',
+          content: '**LM Studio Models**$changed:\n\n$modelsList\n\n'
+              'Endpoint: `${config.lmStudioEndpoint}`\n'
+              'Use `/model <id>` to select one, or select from Paseo\'s dropdown.',
+        ));
         break;
 
       case '/list':
@@ -975,45 +1008,49 @@ class AgentService implements AcpAgentDelegate {
   bool get isUsingAcp => ai is AcpAiService;
 
   /// Set the active model and sync the conversation's context limit.
-  /// If the model belongs to the other provider, auto-switch providers.
+  /// If the model belongs to another provider, auto-switch providers.
   /// Call this instead of setting [ai.currentModel] directly to keep
   /// the context indicator accurate.
-  void setModel(String modelId) {
+  ///
+  /// Returns `true` if the model was switched successfully (or was
+  /// already on the right provider), `false` if the provider switch
+  /// failed.
+  Future<bool> setModel(String modelId) async {
     // Auto-switch provider if needed
     final inZen = ZenModels.get(modelId) != null;
     final inOr = ZenModels.openrouterGet(modelId) != null;
     final inLm = ZenModels.lmStudioGet(modelId) != null;
-    if (inOr && ai is! OpenRouterAiService && !isUsingAcp) {
-      // Model is OpenRouter but we're on Zen — switch to OpenRouter first
-      // We do this synchronously-ish: if we already have a fallback, swap it now
-      if (_openrouterFallback != null) {
-        ai = _openrouterFallback!;
-        _openrouterFallback = null;
-      } else {
-        // Kick off async switch, but set the model anyway for when it completes
-        switchToOpenrouter();
+    try {
+      if (inOr && ai is! OpenRouterAiService && !isUsingAcp) {
+        if (_openrouterFallback != null) {
+          ai = _openrouterFallback!;
+          _openrouterFallback = null;
+        } else {
+          await switchToOpenrouter();
+        }
+      } else if (inLm && ai is! LmStudioAiService && !isUsingAcp) {
+        if (_lmStudioFallback != null) {
+          ai = _lmStudioFallback!;
+          _lmStudioFallback = null;
+        } else {
+          await switchToLmStudio();
+        }
+      } else if (inZen && ai is! ZenAiService && !isUsingAcp) {
+        if (_zenFallback != null) {
+          ai = _zenFallback!;
+          _zenFallback = null;
+        } else {
+          await switchToZen();
+        }
       }
-    } else if (inLm && ai is! LmStudioAiService && !isUsingAcp) {
-      // Model is LM Studio but we're on another provider — switch to LM Studio
-      if (_lmStudioFallback != null) {
-        ai = _lmStudioFallback!;
-        _lmStudioFallback = null;
-      } else {
-        switchToLmStudio();
-      }
-    } else if (inZen && ai is! ZenAiService && !isUsingAcp) {
-      // Model is Zen but we're on OpenRouter — switch to Zen first
-      if (_zenFallback != null) {
-        ai = _zenFallback!;
-        _zenFallback = null;
-      } else {
-        switchToZen();
-      }
+    } catch (e) {
+      return false;
     }
     ai.currentModel = modelId;
     if (_activeConv != null) {
       _activeConv!.contextLimit = ZenModels.contextLimitFor(modelId);
     }
+    return true;
   }
   /// Connect to a remote ACP server and use it as the model provider.
   ///
@@ -1227,8 +1264,8 @@ class AgentService implements AcpAgentDelegate {
   // ─── AcpAgentDelegate implementation ─────────────────────────────────
 
   @override
-  void onSetModel(String modelId) {
-    setModel(modelId);
+  Future<bool> onSetModel(String modelId) async {
+    return await setModel(modelId);
   }
 
   @override
@@ -1241,10 +1278,32 @@ class AgentService implements AcpAgentDelegate {
   }
 
   @override
-  Map<String, dynamic> onNewSession(String cwd) {
+  Future<Map<String, dynamic>> onNewSession(String cwd) async {
     final sessionId = 'session_${DateTime.now().millisecondsSinceEpoch}';
 
-    // Combine Zen + OpenRouter + LM Studio models, deduplicating by ID
+    // If LM Studio only has the default model, try to re-fetch now
+    // (the remote server might have been down during initialize()).
+    if (ZenModels.lmStudioAll.length <= 1 &&
+        ZenModels.lmStudioAll.any((m) => m.id == 'local-model')) {
+      try {
+        final lm = LmStudioAiService(config: config);
+        await lm.fetchModels().timeout(const Duration(seconds: 8));
+      } catch (_) {
+        // Fine, use what we have
+      }
+    }
+
+    return {
+      'id': sessionId,
+      'cwd': cwd,
+      'model': ai.currentModel,
+      'models': _buildModelList(),
+    };
+  }
+
+  /// Build the combined model list (Zen + OpenRouter + LM Studio, dedup'd).
+  /// Used for ACP session/new responses and config updates.
+  List<Map<String, dynamic>> _buildModelList() {
     final seen = <String>{};
     final allModels = <Map<String, dynamic>>[];
     for (final m in ZenModels.all) {
@@ -1278,13 +1337,89 @@ class AgentService implements AcpAgentDelegate {
         });
       }
     }
+    return allModels;
+  }
 
-    return {
-      'id': sessionId,
-      'cwd': cwd,
-      'model': ai.currentModel,
-      'models': allModels,
-    };
+  /// Build [ModelInfo] list from [ZenModels] for ACP session updates.
+  List<ModelInfo> _buildModelInfos() {
+    return _buildModelList().map((m) {
+      final contextLimit = m['contextLimit'] as int?;
+      return ModelInfo(
+        modelId: m['id'] as String,
+        name: m['name'] as String,
+        description: m['description'] as String?,
+        meta: contextLimit != null ? {'contextLimit': contextLimit} : null,
+      );
+    }).toList();
+  }
+
+  /// Notify all active ACP sessions that the model list has changed.
+  /// Pushes a [ConfigOptionUpdate] so the client (e.g. Paseo) can refresh
+  /// its model dropdown. Also sends a [SessionInfoUpdate] as a signal.
+  Future<void> _notifyAcpModelUpdate() async {
+    if (_acpSessions.isEmpty) return;
+
+    final models = _buildModelInfos();
+    if (models.isEmpty) return;
+
+    for (final entry in _acpSessions.entries) {
+      try {
+        // Send model list as a config option update (protocol-correct way
+        // to communicate available choices to the client)
+        await entry.value.sessionUpdate(SessionNotification(
+          sessionId: entry.key,
+          update: ConfigOptionUpdate(
+            configOptions: [
+              SessionConfigOption(
+                id: 'available_models',
+                name: 'Available Models',
+                description:
+                    '${models.length} models available across Zen, OpenRouter, and LM Studio',
+                type: 'select',
+                currentValue: ai.currentModel,
+                options: UngroupedSessionConfigSelectOptions(
+                  options: models
+                      .map((m) => SessionConfigSelectOption(
+                            value: m.modelId,
+                            name: m.name,
+                            description: m.description,
+                          ))
+                      .toList(),
+                ),
+              ),
+            ],
+          ),
+        ));
+        // Also update the session model state via a model info update
+        await entry.value.sessionUpdate(SessionNotification(
+          sessionId: entry.key,
+          update: SessionInfoUpdate(
+            title: 'Utopic · ${ai.currentModel}',
+            updatedAt: DateTime.now().toIso8601String(),
+          ),
+        ));
+      } catch (e) {
+        stderr.writeln('[utopic] ACP model update error: $e');
+      }
+    }
+  }
+
+  /// Try to re-fetch LM Studio models, then notify ACP clients of the update.
+    /// Try to re-fetch LM Studio models, then notify ACP clients of the update.
+  Future<void> refreshLmStudioModels() async {
+    try {
+      final lm = LmStudioAiService(config: config);
+      await lm.fetchModels().timeout(const Duration(seconds: 10));
+      final lmCount = ZenModels.lmStudioAll.length;
+      if (lmCount > 1 || !ZenModels.lmStudioAll.any((m) => m.id == 'local-model')) {
+        stderr.writeln('[utopic] LM Studio models refreshed: $lmCount model(s) loaded');
+        _notifyUpdates();
+        // Notify ACP sessions so Paseo's model dropdown can update
+        unawaited(_notifyAcpModelUpdate());
+      }
+    } catch (e) {
+      stderr.writeln('[utopic] LM Studio refresh failed: $e');
+    }
   }
 
   @override
@@ -1293,6 +1428,9 @@ class AgentService implements AcpAgentDelegate {
     required String prompt,
     required AgentSideConnection connection,
   }) async {
+    // Track this ACP session so we can push model list updates later
+    _acpSessions[sessionId] = connection;
+
     // Find or create conversation
     Conversation? conv;
     try {

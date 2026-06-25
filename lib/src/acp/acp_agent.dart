@@ -34,7 +34,7 @@ class AcpAgent implements Agent {
 
   @override
   Future<NewSessionResponse> newSession(NewSessionRequest params) async {
-    final result = delegate.onNewSession(params.cwd);
+    final result = await delegate.onNewSession(params.cwd);
 
     // Build model info from available models, including context limit
     // in the _meta field so clients (like Paseo) can calculate
@@ -136,7 +136,7 @@ class AcpAgent implements Agent {
   Future<SetSessionModelResponse?>? setSessionModel(
       SetSessionModelRequest params) async {
     // Actually set the model on the delegate so Paseo's model selector works
-    delegate.onSetModel(params.modelId);
+    await delegate.onSetModel(params.modelId);
     return SetSessionModelResponse();
   }
 
@@ -173,7 +173,7 @@ abstract class AcpAgentDelegate {
   Map<String, dynamic> onInitialize();
 
   /// Called on `session/new`. Returns session info map.
-  Map<String, dynamic> onNewSession(String cwd);
+  Future<Map<String, dynamic>> onNewSession(String cwd);
 
   /// Called on `session/prompt`. Runs the agent loop and returns result.
   Future<Map<String, dynamic>> onPrompt({
@@ -189,6 +189,7 @@ abstract class AcpAgentDelegate {
   List<Map<String, dynamic>> onListSessions();
 
   /// Called on `session/set_model`. Sets the active model.
-  /// Default no-op — subclasses can override.
-  void onSetModel(String modelId) {}
+  /// Should return `true` on success, `false` if the model could not be set.
+  /// Default returns `true` — subclasses can override.
+  Future<bool> onSetModel(String modelId) async => true;
 }

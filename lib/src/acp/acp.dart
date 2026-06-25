@@ -16,7 +16,14 @@ export 'package:acp_dart/acp_dart.dart' show
   ContentToolCallContent,
   TextContentBlock,
   Cost,
-  UsageUpdate;
+  UsageUpdate,
+  ConfigOptionUpdate,
+  SessionInfoUpdate,
+  SessionConfigOption,
+  UngroupedSessionConfigSelectOptions,
+  SessionConfigSelectOption,
+  ModelInfo,
+  SessionModelState;
 export 'acp_server.dart';
 export 'acp_dart_client.dart';
 export 'acp_agent.dart';
