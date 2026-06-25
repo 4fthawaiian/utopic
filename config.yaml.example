@@ -7,7 +7,7 @@
 #   4. ~/.config.yaml
 
 # ─── Provider ────────────────────────────────────────────────────────
-# Which AI provider to use by default: "zen" or "openrouter"
+# Which AI provider to use by default: "zen", "openrouter", or "lmstudio"
 # Can also be switched at runtime with /provider command
 provider: "zen"
 
@@ -28,6 +28,16 @@ zen_endpoint: "https://opencode.ai/zen"
 # openrouter_api_key: "sk-or-..."
 # openrouter_endpoint: "https://openrouter.ai/api/v1"
 # default_openrouter_model: "openai/gpt-4o"
+
+# ─── LM Studio ─────────────────────────────────────────────────────
+# To use local models via LM Studio:
+#   1. Start LM Studio and enable the local API server
+#      (Settings → Local Server → Start Server, default port 1234)
+#   2. Set provider: "lmstudio" or use --lmstudio flag
+#   3. Use /provider lmstudio at runtime
+# LM Studio uses an OpenAI-compatible API, so no API key is needed.
+# lm_studio_endpoint: "http://localhost:1234/v1"
+# default_lm_studio_model: "local-model"
 
 # Custom system prompt — replaces the default if set
 # system_prompt: |

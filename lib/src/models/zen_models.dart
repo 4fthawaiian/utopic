@@ -85,6 +85,12 @@ class ZenModels {
     ZenModel(id: 'x-ai/grok-2-1212', provider: 'xai', contextLimit: 131072),
   ];
 
+  /// Default LM Studio model (placeholder — actual models are loaded from
+  /// the local LM Studio server's /v1/models endpoint).
+  static const List<ZenModel> _lmStudioDefaults = [
+    ZenModel(id: 'local-model', provider: 'lmstudio', contextLimit: 32768),
+  ];
+
   // ─── Zen API model list ──────────────────────────────────────────────
   static List<ZenModel> _models = List.from(_defaults);
   static Map<String, ZenModel> _byId = {for (final m in _defaults) m.id: m};
@@ -107,8 +113,20 @@ class ZenModels {
   /// Get an OpenRouter model by ID (e.g. `openai/gpt-4o`).
   static ZenModel? openrouterGet(String id) => _openrouterById[id];
 
+  // ─── LM Studio model list ───────────────────────────────────────────
+  static List<ZenModel> _lmStudioModels = List.from(_lmStudioDefaults);
+  static Map<String, ZenModel> _lmStudioById =
+      {for (final m in _lmStudioDefaults) m.id: m};
+
+  /// All currently known LM Studio models.
+  static List<ZenModel> get lmStudioAll =>
+      List.unmodifiable(_lmStudioModels);
+
+  /// Get an LM Studio model by ID.
+  static ZenModel? lmStudioGet(String id) => _lmStudioById[id];
+
   /// Look up the context window limit for a model ID.
-  /// Checks both Zen and OpenRouter lists, then falls back to
+  /// Checks Zen, OpenRouter, and LM Studio lists, then falls back to
   /// sensible defaults based on model family, then to [defaultLimit].
   static int contextLimitFor(String modelId, {int defaultLimit = 128000}) {
     // Check Zen models first
@@ -117,6 +135,9 @@ class ZenModels {
     // Then OpenRouter models
     final orModel = _openrouterById[modelId];
     if (orModel != null) return orModel.contextLimit;
+    // Then LM Studio models
+    final lmModel = _lmStudioById[modelId];
+    if (lmModel != null) return lmModel.contextLimit;
     // Family-based fallbacks
     final lower = modelId.toLowerCase();
     if (lower.contains('claude') || lower.contains('fable')) return 200000;
@@ -149,6 +170,7 @@ class ZenModels {
     if (lower.contains('meta') || lower.contains('llama')) return 'meta';
     if (lower.contains('mistral')) return 'mistral';
     if (lower.contains('cohere') || lower.contains('command')) return 'cohere';
+    if (lower.contains('local')) return 'lmstudio';
     return 'other';
   }
 
@@ -224,5 +246,37 @@ class ZenModels {
 
     _openrouterModels = updated;
     _openrouterById = {for (final m in _openrouterModels) m.id: m};
+  }
+
+  /// Merge LM Studio models from the API response into the catalog.
+  static void mergeLmStudioModels(List<Map<String, dynamic>> apiModels) {
+    final updated = <ZenModel>[];
+    final seenIds = <String>{};
+
+    for (final raw in apiModels) {
+      final id = raw['id'] as String?;
+      if (id == null || id.isEmpty) continue;
+      seenIds.add(id);
+
+      final existing = _lmStudioById[id];
+      if (existing != null) {
+        updated.add(existing);
+      } else {
+        updated.add(ZenModel(
+          id: id,
+          provider: 'lmstudio',
+        ));
+      }
+    }
+
+    // Keep defaults that the API didn't enumerate
+    for (final m in _lmStudioDefaults) {
+      if (!seenIds.contains(m.id)) {
+        updated.add(m);
+      }
+    }
+
+    _lmStudioModels = updated;
+    _lmStudioById = {for (final m in _lmStudioModels) m.id: m};
   }
 }

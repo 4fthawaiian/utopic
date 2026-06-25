@@ -21,6 +21,7 @@ class AgentService implements AcpAgentDelegate {
   AcpDartConnection? _acpConnection;
   ZenAiService? _zenFallback;
   OpenRouterAiService? _openrouterFallback;
+  LmStudioAiService? _lmStudioFallback;
   final SessionStore _sessionStore = SessionStore();
   String? _cwd;
   bool _cancelRequested = false;
@@ -56,11 +57,25 @@ class AgentService implements AcpAgentDelegate {
   AgentService({required this.config, AiService? aiService})
       : ai = aiService ?? _createDefaultAi(config);
 
+  /// Human-readable display name for a provider.
+  static String _providerDisplayName(AiProvider p) {
+    switch (p) {
+      case AiProvider.openrouter:
+        return 'OpenRouter';
+      case AiProvider.lmstudio:
+        return 'LM Studio';
+      case AiProvider.zen:
+        return 'Zen';
+    }
+  }
+
   /// Create the default AI service based on the config provider setting.
   static AiService _createDefaultAi(AppConfig cfg) {
     switch (cfg.provider) {
       case AiProvider.openrouter:
         return OpenRouterAiService(config: cfg);
+      case AiProvider.lmstudio:
+        return LmStudioAiService(config: cfg);
       case AiProvider.zen:
         return ZenAiService(config: cfg);
     }
@@ -171,6 +186,14 @@ class AgentService implements AcpAgentDelegate {
       }
     } catch (_) {
       // Fall back to defaults
+    }
+
+    // Always try LM Studio models (silently — fine if LM Studio isn't running)
+    try {
+      final lm = LmStudioAiService(config: config);
+      await lm.fetchModels();
+    } catch (_) {
+      // LM Studio probably isn't running, fall back to defaults
     }
     _skills.loadAll();
 
@@ -628,14 +651,14 @@ class AgentService implements AcpAgentDelegate {
           content: '**Available Commands:**\n\n'
               '`/help` - Show this help message\n'
               '`/model <name>` - Switch AI model\n'
-              '`/provider` - Show current provider (Zen/OpenRouter)\n'
-              '`/provider <zen|openrouter>` - Switch provider\n'
+              '`/provider` - Show current provider (Zen/OpenRouter/LM Studio)\n'
+              '`/provider <zen|openrouter|lmstudio>` - Switch provider\n'
               '`/new` - Start a new conversation\n'
               '`/list` - List all conversations\n'
               '`/switch <id>` - Switch to a conversation\n'
               '`/clear` - Clear current conversation\n'
               '`/acp` - Toggle ACP server status\n'
-              '`/models` - List ALL available models (Zen + OpenRouter)\n'
+              '`/models` - List ALL available models\n'
               '`/prompt <text>` - Set per-conversation system prompt\n'
               '`/quit` - Exit the agent\n'
               '`/phobe` - Toggle phobe mode (remove pride theming)'
@@ -668,7 +691,7 @@ class AgentService implements AcpAgentDelegate {
             setModel(modelId);
             final newProvider = currentProvider;
             final providerNote = prevProvider != newProvider
-                ? ' (auto-switched to **${newProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}**)'
+                ? ' (auto-switched to **${_providerDisplayName(newProvider)}**)'
                 : '';
             final msg = Message(
               role: 'assistant',
@@ -687,10 +710,11 @@ class AgentService implements AcpAgentDelegate {
         break;
 
       case '/models':
+        final providerName = _providerDisplayName(currentProvider);
         final buffer = StringBuffer();
         buffer.writeln('**Available Models:**\n');
-        buffer.writeln('_Current provider: `${currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}` — '
-            'switch via `/provider <zen|openrouter>`_');
+        buffer.writeln('_Current provider: `$providerName` — '
+            'switch via `/provider <zen|openrouter|lmstudio>`_');
         buffer.writeln('');
 
         // Zen models section
@@ -706,6 +730,14 @@ class AgentService implements AcpAgentDelegate {
         for (final model in ZenModels.openrouterAll) {
           final active = model.id == ai.currentModel ? ' ◀' : '';
           buffer.writeln('- `${model.id}` (${model.provider}, OpenRouter)$active');
+        }
+
+        buffer.writeln('');
+        // LM Studio models section
+        buffer.writeln('**LM Studio:**');
+        for (final model in ZenModels.lmStudioAll) {
+          final active = model.id == ai.currentModel ? ' ◀' : '';
+          buffer.writeln('- `${model.id}` (${model.provider}, LM Studio)$active');
         }
         _activeConv!.addMessage(Message(role: 'assistant', content: buffer.toString()));
         break;
@@ -727,6 +759,21 @@ class AgentService implements AcpAgentDelegate {
                     'Use `/models` to see available models, `/model <id>` to select one.',
               ));
             }
+          } else if (target == 'lmstudio' || target == 'lm_studio') {
+            if (ai is LmStudioAiService) {
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '⚠️ Already using LM Studio (`${ai.currentModel}`)',
+              ));
+            } else {
+              await switchToLmStudio();
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '✅ Switched to **LM Studio** (`${ai.currentModel}`)\n'
+                    'Use `/models` to see available models, `/model <id>` to select one.\n'
+                    'Make sure LM Studio is running on ${config.lmStudioEndpoint}.',
+              ));
+            }
           } else if (target == 'zen') {
             if (ai is ZenAiService) {
               _activeConv!.addMessage(Message(
@@ -744,15 +791,15 @@ class AgentService implements AcpAgentDelegate {
           } else {
             _activeConv!.addMessage(Message(
               role: 'assistant',
-              content: '⚠️ Unknown provider: `$target`. Use `zen` or `openrouter`.',
+              content: '⚠️ Unknown provider: `$target`. Use `zen`, `openrouter`, or `lmstudio`.',
             ));
           }
         } else {
-          _activeConv!.addMessage(Message(
-            role: 'assistant',
-            content: '**Current provider:** `${currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}`\n'
+        _activeConv!.addMessage(Message(
+          role: 'assistant',
+          content: '**Current provider:** `${_providerDisplayName(currentProvider)}`\n'
                 '**Current model:** `${ai.currentModel}`\n\n'
-                'Use `/provider <zen|openrouter>` to switch.',
+                'Use `/provider <zen|openrouter|lmstudio>` to switch.',
           ));
         }
         break;
@@ -827,13 +874,15 @@ class AgentService implements AcpAgentDelegate {
         break;
 
       case '/config':
+        final providerName = _providerDisplayName(currentProvider);
         _activeConv!.addMessage(Message(
           role: 'assistant',
           content: '**Configuration:**\n\n'
-              '- Provider: `${currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}`\n'
+              '- Provider: `$providerName`\n'
               '- Model: `${ai.currentModel}`\n'
               '- Zen endpoint: `${config.zenEndpoint}`\n'
               '- OpenRouter endpoint: `${config.openrouterEndpoint}`\n'
+              '- LM Studio endpoint: `${config.lmStudioEndpoint}`\n'
               '- Zen API key: ${config.opencodeApiKey != null ? '✅ set' : '❌ not set'}\n'
               '- OpenRouter API key: ${config.openrouterApiKey != null ? '✅ set' : '❌ not set'}\n'
               '- ACP: ${isUsingAcp ? "✅ provider (${ai.currentModel})" : (isAcpRunning ? "✅ server running" : "❌ stopped")}\n'
@@ -933,6 +982,7 @@ class AgentService implements AcpAgentDelegate {
     // Auto-switch provider if needed
     final inZen = ZenModels.get(modelId) != null;
     final inOr = ZenModels.openrouterGet(modelId) != null;
+    final inLm = ZenModels.lmStudioGet(modelId) != null;
     if (inOr && ai is! OpenRouterAiService && !isUsingAcp) {
       // Model is OpenRouter but we're on Zen — switch to OpenRouter first
       // We do this synchronously-ish: if we already have a fallback, swap it now
@@ -942,6 +992,14 @@ class AgentService implements AcpAgentDelegate {
       } else {
         // Kick off async switch, but set the model anyway for when it completes
         switchToOpenrouter();
+      }
+    } else if (inLm && ai is! LmStudioAiService && !isUsingAcp) {
+      // Model is LM Studio but we're on another provider — switch to LM Studio
+      if (_lmStudioFallback != null) {
+        ai = _lmStudioFallback!;
+        _lmStudioFallback = null;
+      } else {
+        switchToLmStudio();
       }
     } else if (inZen && ai is! ZenAiService && !isUsingAcp) {
       // Model is Zen but we're on OpenRouter — switch to Zen first
@@ -1008,6 +1066,8 @@ class AgentService implements AcpAgentDelegate {
   void _swapToAcp(AcpDartConnection conn) {
     if (ai is ZenAiService) {
       _zenFallback = ai as ZenAiService;
+    } else if (ai is LmStudioAiService) {
+      _lmStudioFallback = ai as LmStudioAiService;
     }
     ai = AcpAiService(config: config, conn: conn);
     _notifyUpdates();
@@ -1019,10 +1079,13 @@ class AgentService implements AcpAgentDelegate {
       await _acpConnection!.disconnect();
       _acpConnection = null;
     }
-    // Restore the fallback, preferring OpenRouter over Zen
+    // Restore the fallback, preferring OpenRouter > LM Studio > Zen
     if (_openrouterFallback != null) {
       ai = _openrouterFallback!;
       _openrouterFallback = null;
+    } else if (_lmStudioFallback != null) {
+      ai = _lmStudioFallback!;
+      _lmStudioFallback = null;
     } else {
       ai = _zenFallback ?? ZenAiService(config: config);
     }
@@ -1035,9 +1098,11 @@ class AgentService implements AcpAgentDelegate {
   /// Which AI provider is currently active.
   AiProvider get currentProvider {
     if (ai is OpenRouterAiService) return AiProvider.openrouter;
+    if (ai is LmStudioAiService) return AiProvider.lmstudio;
     if (ai is ZenAiService) return AiProvider.zen;
-    // ACP or other — check the fallback
+    // ACP or other — check the fallbacks
     if (_openrouterFallback != null) return AiProvider.openrouter;
+    if (_lmStudioFallback != null) return AiProvider.lmstudio;
     return AiProvider.zen;
   }
 
@@ -1047,6 +1112,8 @@ class AgentService implements AcpAgentDelegate {
     // Save current non-ACP service as fallback
     if (ai is ZenAiService) {
       _zenFallback = ai as ZenAiService;
+    } else if (ai is LmStudioAiService) {
+      _lmStudioFallback = ai as LmStudioAiService;
     }
     // Create or reuse existing OpenRouter service
     if (_openrouterFallback != null) {
@@ -1068,6 +1135,8 @@ class AgentService implements AcpAgentDelegate {
     // Save current non-ACP service as fallback
     if (ai is OpenRouterAiService) {
       _openrouterFallback = ai as OpenRouterAiService;
+    } else if (ai is LmStudioAiService) {
+      _lmStudioFallback = ai as LmStudioAiService;
     }
     // Create or reuse existing Zen service
     if (_zenFallback != null) {
@@ -1076,6 +1145,28 @@ class AgentService implements AcpAgentDelegate {
     } else {
       ai = ZenAiService(config: config);
       ai.fetchModels();
+    }
+    _notifyUpdates();
+  }
+
+  /// Switch to LM Studio provider.
+  Future<void> switchToLmStudio() async {
+    if (ai is LmStudioAiService) return; // already there
+    // Save current non-ACP service as fallback
+    if (ai is ZenAiService) {
+      _zenFallback = ai as ZenAiService;
+    } else if (ai is OpenRouterAiService) {
+      _openrouterFallback = ai as OpenRouterAiService;
+    }
+    // Create or reuse existing LM Studio service
+    if (_lmStudioFallback != null) {
+      ai = _lmStudioFallback!;
+      _lmStudioFallback = null;
+    } else {
+      ai = LmStudioAiService(config: config);
+      try {
+        await (ai as LmStudioAiService).fetchModels();
+      } catch (_) {}
     }
     _notifyUpdates();
   }
@@ -1153,7 +1244,7 @@ class AgentService implements AcpAgentDelegate {
   Map<String, dynamic> onNewSession(String cwd) {
     final sessionId = 'session_${DateTime.now().millisecondsSinceEpoch}';
 
-    // Combine Zen + OpenRouter models, deduplicating by ID
+    // Combine Zen + OpenRouter + LM Studio models, deduplicating by ID
     final seen = <String>{};
     final allModels = <Map<String, dynamic>>[];
     for (final m in ZenModels.all) {
@@ -1167,10 +1258,22 @@ class AgentService implements AcpAgentDelegate {
     }
     for (final m in ZenModels.openrouterAll) {
       if (!seen.contains(m.id)) {
+        seen.add(m.id);
         allModels.add({
           'id': m.id,
           'name': m.displayName,
           'description': 'OpenRouter · ${m.contextLimit ~/ 1000}K context',
+          'contextLimit': m.contextLimit,
+        });
+      }
+    }
+    for (final m in ZenModels.lmStudioAll) {
+      if (!seen.contains(m.id)) {
+        seen.add(m.id);
+        allModels.add({
+          'id': m.id,
+          'name': m.displayName,
+          'description': 'LM Studio · ${m.contextLimit ~/ 1000}K context',
           'contextLimit': m.contextLimit,
         });
       }

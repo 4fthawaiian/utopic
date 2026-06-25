@@ -13,6 +13,7 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 - 🖥️ **Terminal UI** — Non-modal, just type and send. Rainbow pride theming (toggle with `/phobe` or `--phobe`)
 - 🤖 **OpenCode Zen** — Claude, GPT, Gemini, DeepSeek, Qwen pre-configured, live model list on startup
 - 🌐 **OpenRouter** — Use 200+ models via OpenRouter (GPT-4o, Claude Sonnet, Gemini, Llama, Mistral, etc.), switch providers at runtime with `/provider`
+- 🏠 **LM Studio** — Use local models via LM Studio (OpenAI-compatible server on `http://localhost:1234/v1`), switch providers at runtime with `/provider` or `--lmstudio` CLI flag
 - 🧠 **Skills** — Agent Skills spec (agentskills.io) — drop `skills/<name>/SKILL.md` in your project or `~/.config/utopic/skills/`
 - 📄 **Flexible prompts** — YAML config, `AGENTS.md` (project + global), `--prompt` flag, per-conversation `/prompt`
 - 🔄 **Agent loop** — Multi-iteration tool calling (bash, read, write, edit), configurable via `max_iterations` in `config.yaml` (default 10), cancel anytime with `Ctrl+C`
@@ -32,6 +33,12 @@ Or use OpenRouter:
 ```bash
 export OPENROUTER_API_KEY="sk-or-..."
 dart run -- --openrouter   # run with OpenRouter provider
+```
+
+Or use LM Studio (local inference):
+
+```bash
+dart run -- --lmstudio     # run with LM Studio provider
 ```
 
 Or build once with `dart compile exe bin/utopic.dart -o utopic` and use `./utopic` for all subsequent runs.
@@ -78,8 +85,8 @@ dart run -- "what's in this directory?"
 | `/list` | List conversations (💾 = saved) |
 | `/switch <n>` | Switch conversation |
 | `/config` | Show current configuration |
-| `/provider` | Show current AI provider (Zen / OpenRouter) |
-| `/provider <zen\|openrouter>` | Switch AI provider at runtime |
+| `/provider` | Show current AI provider (Zen / OpenRouter / LM Studio) |
+| `/provider <zen\|openrouter\|lmstudio>` | Switch AI provider at runtime |
 | `/phobe` | Toggle pride theming on/off |
 | `/quit` | Exit |
 
@@ -162,7 +169,7 @@ system_prompt: |
 
 ## Models
 
-Utopic supports **two AI providers** — switch between them with `/provider`:
+Utopic supports **three AI providers** — switch between them with `/provider`:
 
 ### OpenCode Zen (default)
 
@@ -189,8 +196,21 @@ Plus paid models from Anthropic, OpenAI, Google, DeepSeek, and more.
 
 ⚠️ OpenRouter requires an API key (`openrouter_api_key` in config or `OPENROUTER_API_KEY` env var).
 
+### LM Studio
+
+Run models **locally** on your machine using [LM Studio](https://lmstudio.ai/) — no API key needed, no data leaves your computer. Utopic connects to LM Studio's OpenAI-compatible API at `http://localhost:1234/v1` (configurable).
+
+- Models are fetched live from LM Studio's `/v1/models` endpoint
+- Any model loaded in LM Studio is available instantly
+- Supports tool calling (bash, read, write, edit) if the model supports it
+- Perfect for offline work, privacy-sensitive projects, or testing
+
+⚠️ Make sure LM Studio is **running** with the local API server enabled (Settings → Local Server → `Start Server`).
+
+### Provider auto-switch
+
 Use `/model` to pick a model interactively, or `/model <id>` to set directly.
-When you select a model from the other provider, Utopic auto-switches providers for you.
+When you select a model from another provider, Utopic **auto-switches** providers for you.
 
 ## ACP (Agent Client Protocol)
 
@@ -281,8 +301,8 @@ Config is loaded from (in priority order):
 3. `~/.config/utopic/config.yaml`
 4. `~/.config.yaml`
 
-**`provider`** — which AI provider to use by default: `zen` or `openrouter`.
-Can be overridden at runtime with `/provider` or the `--openrouter` CLI flag.
+**`provider`** — which AI provider to use by default: `zen`, `openrouter`, or `lmstudio`.
+Can be overridden at runtime with `/provider` or the `--openrouter` / `--lmstudio` CLI flags.
 
 **`max_iterations`** — maximum rounds of AI + tool calls before the agent stops
 (prevents runaway loops). Default: 10. Increase for complex multi-step tasks.
@@ -291,9 +311,13 @@ Can be overridden at runtime with `/provider` or the `--openrouter` CLI flag.
 
 **Model (OpenRouter)** — set via `default_openrouter_model` (e.g. `openai/gpt-4o`).
 
+**Model (LM Studio)** — set via `default_lm_studio_model` (e.g. `local-model`).
+
 **OpenRouter API key** — provide via `OPENROUTER_API_KEY` env var or `openrouter_api_key` in YAML.
 
 **OpenRouter endpoint** — set via `openrouter_endpoint` (default: `https://openrouter.ai/api/v1`).
+
+**LM Studio endpoint** — set via `lm_studio_endpoint` (default: `http://localhost:1234/v1`).
 
 **ACP server auto-start** — set `acp.enabled: true` to start the server on boot.
 
@@ -303,9 +327,10 @@ Can be overridden at runtime with `/provider` or the `--openrouter` CLI flag.
 
 ```bash
 ./utopic --help
-./utopic --prompt my-prompt.md     # inject a prompt file
-./utopic --openrouter              # start with OpenRouter provider
-./utopic --phobe                   # launch without pride theming
+./utopic --prompt my-prompt.md       # inject a prompt file
+./utopic --openrouter                # start with OpenRouter provider
+./utopic --lmstudio                  # start with LM Studio provider (local)
+./utopic --phobe                     # launch without pride theming
 ./utopic --config path/to/yaml       # use a specific config file
 ./utopic --load conv_xxx...          # resume a saved session
 ./utopic "write a go routine"        # one-shot (print response, exit)

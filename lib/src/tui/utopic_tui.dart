@@ -31,14 +31,14 @@ class UtopicTuiApp extends TuiApp {
   final String? _loadSessionId;
 
   /// Models available for selection — ACP remote models if connected,
-  /// otherwise both Zen and OpenRouter models combined.
+  /// otherwise Zen, OpenRouter, and LM Studio models combined.
   List<Map<String, dynamic>> get _modelList {
     if (_agent.isUsingAcp && _agent.ai is AcpAiService) {
       final acp = _agent.ai as AcpAiService;
       final acpModels = acp.availableModels;
       if (acpModels.isNotEmpty) return acpModels;
     }
-    // Combine both Zen and OpenRouter models, deduplicating by ID,
+    // Combine Zen, OpenRouter, and LM Studio models, deduplicating by ID,
     // and show which API serves each model
     final seen = <String>{};
     final result = <Map<String, dynamic>>[];
@@ -48,7 +48,14 @@ class UtopicTuiApp extends TuiApp {
     }
     for (final m in ZenModels.openrouterAll) {
       if (!seen.contains(m.id)) {
+        seen.add(m.id);
         result.add({'value': m.id, 'name': '${m.id} (${m.provider}, OpenRouter)'});
+      }
+    }
+    for (final m in ZenModels.lmStudioAll) {
+      if (!seen.contains(m.id)) {
+        seen.add(m.id);
+        result.add({'value': m.id, 'name': '${m.id} (${m.provider}, LM Studio)'});
       }
     }
     return result;
@@ -244,7 +251,7 @@ class UtopicTuiApp extends TuiApp {
           '    /model <id>   Switch model by ID',
           '    /models       List ALL models (Zen API + OpenRouter)',
           '    /provider     Show current provider',
-          '    /provider <zen|openrouter>  Switch AI provider',
+          '    /provider <zen|openrouter|lmstudio>  Switch AI provider',
           '    /prompt       Show current prompt override',
           '    /prompt <t>   Set per-conversation system prompt',
           '    /acp          Toggle ACP server (accept connections)',
@@ -258,7 +265,7 @@ class UtopicTuiApp extends TuiApp {
           '    /phobe        Toggle phobe mode (remove pride theming)',
           '    /quit         Exit',
           '',
-          '  PROVIDER: ${_agent.currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen'}  ·  ${_agent.ai.currentModel}',
+          '  PROVIDER: ${_agent.currentProvider == AiProvider.openrouter ? 'OpenRouter' : _agent.currentProvider == AiProvider.lmstudio ? 'LM Studio' : 'Zen'}  ·  ${_agent.ai.currentModel}',
           '',
           '  MODELS (${_modelList.length} total):',
           '    (◀ = active model, /model <id> to switch, /models to list all)',
@@ -315,6 +322,18 @@ class UtopicTuiApp extends TuiApp {
                 _status = 'Switch failed: $e';
               });
             }
+          } else if (target == 'lmstudio' || target == 'lm_studio') {
+            if (_agent.currentProvider == AiProvider.lmstudio) {
+              _status = 'Already using LM Studio';
+            } else {
+              _status = 'Switching to LM Studio...';
+              _agent.switchToLmStudio().then((_) {
+                _status = 'LM Studio: ${_agent.ai.currentModel}';
+                _refreshChat(context);
+              }).catchError((e) {
+                _status = 'Switch failed: $e';
+              });
+            }
           } else if (target == 'zen') {
             if (_agent.currentProvider == AiProvider.zen) {
               _status = 'Already using Zen';
@@ -328,16 +347,24 @@ class UtopicTuiApp extends TuiApp {
               });
             }
           } else {
-            _status = 'Unknown provider: $target  (use zen or openrouter)';
+            _status = 'Unknown provider: $target  (use zen, openrouter, or lmstudio)';
           }
         } else {
-          final name = _agent.currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen';
-          _status = 'Provider: $name  ·  ${_agent.ai.currentModel}  (/provider <zen|openrouter>)';
+          final name = _agent.currentProvider == AiProvider.openrouter
+              ? 'OpenRouter'
+              : _agent.currentProvider == AiProvider.lmstudio
+                  ? 'LM Studio'
+                  : 'Zen';
+          _status = 'Provider: $name  ·  ${_agent.ai.currentModel}  (/provider <zen|openrouter|lmstudio>)';
         }
         return;
 
       case 'models':
-        final provider = _agent.currentProvider == AiProvider.openrouter ? 'OpenRouter' : 'Zen';
+        final provider = _agent.currentProvider == AiProvider.openrouter
+            ? 'OpenRouter'
+            : _agent.currentProvider == AiProvider.lmstudio
+                ? 'LM Studio'
+                : 'Zen';
         final lines = <String>['', ' All Models:', '   (provider: $provider — /provider to switch)', ''];
         // Zen section
         lines.add(' ── Zen API ──');
@@ -352,9 +379,16 @@ class UtopicTuiApp extends TuiApp {
           final active = _agent.ai.currentModel == m.id ? ' ◀ ACTIVE' : '';
           lines.add('   ${m.id} (${m.provider}, OpenRouter)$active');
         }
+        lines.add('');
+        // LM Studio section
+        lines.add(' ── LM Studio ──');
+        for (final m in ZenModels.lmStudioAll) {
+          final active = _agent.ai.currentModel == m.id ? ' ◀ ACTIVE' : '';
+          lines.add('   ${m.id} (${m.provider}, LM Studio)$active');
+        }
         _scroll.setLines(lines);
         _scroll.scrollTop();
-        _status = '${ZenModels.all.length + ZenModels.openrouterAll.length} models total (provider: $provider)';
+        _status = '${ZenModels.all.length + ZenModels.openrouterAll.length + ZenModels.lmStudioAll.length} models total (provider: $provider)';
         return;
 
       case 'acp':

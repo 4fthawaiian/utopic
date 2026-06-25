@@ -12,6 +12,7 @@ void main(List<String> args) async {
   String? loadSessionId;
   var phobeMode = false;
   var useOpenRouter = false;
+  var useLmStudio = false;
   final positional = <String>[];
 
   for (int i = 0; i < args.length; i++) {
@@ -39,6 +40,10 @@ void main(List<String> args) async {
       useOpenRouter = true;
       continue;
     }
+    if (args[i] == '--lmstudio') {
+      useLmStudio = true;
+      continue;
+    }
     if (args[i] == '--acp-server') {
       // Handled below after config load
       continue;
@@ -54,8 +59,16 @@ void main(List<String> args) async {
     positional.add(args[i]);
   }
 
-  final config = AppConfig.load(promptFile: promptFile, configPath: configPath,
-      provider: useOpenRouter ? AiProvider.openrouter : null);
+  final provider = useLmStudio
+      ? AiProvider.lmstudio
+      : useOpenRouter
+          ? AiProvider.openrouter
+          : null;
+  final config = AppConfig.load(
+    promptFile: promptFile,
+    configPath: configPath,
+    provider: provider,
+  );
 
   // One-shot mode: positional arg is the prompt string
   // e.g.  dart run -- "what's 2+2?"   or   ./utopic "refactor this"
@@ -128,7 +141,11 @@ Future<void> _runOnce(String prompt, AppConfig config) async {
   conv.addMessage(Message(role: 'system', content: systemPrompt));
   conv.addMessage(Message(role: 'user', content: prompt));
 
-  final ai = ZenAiService(config: config);
+  final ai = switch (config.provider) {
+    AiProvider.openrouter => OpenRouterAiService(config: config),
+    AiProvider.lmstudio  => LmStudioAiService(config: config),
+    AiProvider.zen       => ZenAiService(config: config),
+  };
 
   // Tool definitions
   final tools = [
@@ -256,6 +273,7 @@ OPTIONS:
   --load <id>      Resume a saved session by ID (see /save + exit message)
   --phobe          Launch in boring mode (no pride theming)
   --openrouter     Start with OpenRouter provider instead of Zen
+  --lmstudio       Start with LM Studio provider (local inference server)
   --acp-server     Run in daemon mode (headless ACP server over TCP, no TUI)
   --acp-stdio      Run in daemon mode (headless ACP server over stdin/stdout)
   --help / -h      Show this help
@@ -270,6 +288,7 @@ CONFIG:
 ENVIRONMENT:
   OPENCODE_API_KEY     API key for OpenCode Zen models
   OPENROUTER_API_KEY   API key for OpenRouter models (required for OpenRouter provider)
+  LM Studio runs locally on http://localhost:1234/v1 by default (configurable in config.yaml)
 
 KEYS (interactive mode):
   Enter           Send message
@@ -282,8 +301,9 @@ KEYS (interactive mode):
   Ctrl+C          Interrupt / cancel (passes through)
 
 PRE-CONFIGURED MODELS:
-  Zen API:  ${ZenModels.all.length}+ models (default)
-  OpenRouter: ${ZenModels.openrouterAll.length}+ models
+  Zen API:      ${ZenModels.all.length}+ models (default)
+  OpenRouter:   ${ZenModels.openrouterAll.length}+ models
+  LM Studio:    ${ZenModels.lmStudioAll.length}+ models (local)
   Use /models to list, /model <id> to switch, /provider to toggle providers
 
 ACP (Agent Client Protocol):

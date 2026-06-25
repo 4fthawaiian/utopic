@@ -482,6 +482,211 @@ class OpenRouterAiService extends AiService {
 }
 
 // ============================================================================
+// LmStudioAiService — calls a local LM Studio instance via the
+// OpenAI-compatible Chat Completions API (http://localhost:1234/v1)
+// ============================================================================
+
+class LmStudioAiService extends AiService {
+  final http.Client _client;
+  String? _currentModel;
+
+  LmStudioAiService({required super.config, http.Client? client})
+      : _client = client ?? http.Client();
+
+  @override
+  String get currentModel =>
+      _currentModel ?? config.defaultLmStudioModel;
+
+  @override
+  set currentModel(String model) => _currentModel = model;
+
+  /// Build standard Chat Completions messages from a conversation.
+  List<Map<String, dynamic>> _buildMessages(Conversation conversation) {
+    final messages = <Map<String, dynamic>>[];
+
+    for (final msg in conversation.messages) {
+      if (msg.role == 'system') {
+        messages.add({'role': 'system', 'content': msg.content});
+      } else if (msg.role == 'tool') {
+        messages.add({
+          'role': 'tool',
+          'tool_call_id': msg.toolCallId ?? '',
+          'content': msg.content,
+        });
+      } else if (msg.toolCalls != null && msg.toolCalls!.isNotEmpty) {
+        messages.add({
+          'role': 'assistant',
+          'content': msg.content.isNotEmpty ? msg.content : null,
+          'tool_calls': msg.toolCalls!.map((tc) => {
+            'id': tc['id'],
+            'type': 'function',
+            'function': {
+              'name': tc['name'],
+              'arguments': tc['arguments'] is String
+                  ? tc['arguments']
+                  : jsonEncode(tc['arguments']),
+            },
+          }).toList(),
+        });
+      } else {
+        messages.add({'role': msg.role, 'content': msg.content});
+      }
+    }
+
+    return messages;
+  }
+
+  /// Convert a tool from the internal flat format (Responses API style)
+  /// to the Chat Completions API format (with `function` wrapper).
+  Map<String, dynamic> _toolToChatFormat(Map<String, dynamic> tool) {
+    return {
+      'type': 'function',
+      'function': {
+        'name': tool['name'],
+        'description': tool['description'],
+        'parameters': tool['parameters'],
+      },
+    };
+  }
+
+  @override
+  Future<AiResult> complete({
+    required Conversation conversation,
+    List<Map<String, dynamic>>? tools,
+    Map<String, dynamic>? extraParams,
+  }) async {
+    final modelId = currentModel;
+    final startTime = DateTime.now();
+
+    final messages = _buildMessages(conversation);
+    final chatTools = tools
+        ?.map((t) => _toolToChatFormat(t))
+        .toList();
+
+    final body = <String, dynamic>{
+      'model': modelId,
+      'messages': messages,
+      'max_tokens': 8192,
+      'stream': false,
+      if (chatTools != null && chatTools.isNotEmpty) 'tools': chatTools,
+      if (chatTools != null && chatTools.isNotEmpty) 'tool_choice': 'auto',
+      ...?extraParams,
+    };
+
+    final response = await _client
+        .post(
+          Uri.parse('${config.lmStudioEndpoint}/chat/completions'),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 120));
+
+    final duration = DateTime.now().difference(startTime);
+
+    if (response.statusCode != 200) {
+      final detail = _parseLmStudioError(response.body);
+      throw HttpException(
+        'LM Studio API error (${response.statusCode}): $detail',
+      );
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final content = _extractChatContent(data);
+    final toolCalls = _extractChatToolCalls(data);
+    final usage = data['usage'] as Map<String, dynamic>?;
+
+    return AiResult(
+      content: content,
+      model: data['model'] as String? ?? modelId,
+      inputTokens: usage?['prompt_tokens'] as int? ?? 0,
+      outputTokens: usage?['completion_tokens'] as int? ?? 0,
+      duration: duration,
+      toolCalls: toolCalls,
+    );
+  }
+
+  @override
+  Future<List<ZenModel>> fetchModels() async {
+    try {
+      final response = await _client.get(
+        Uri.parse('${config.lmStudioEndpoint}/models'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final apiModels = data['data'] as List? ?? [];
+        ZenModels.mergeLmStudioModels(
+          apiModels.cast<Map<String, dynamic>>(),
+        );
+      }
+    } catch (_) {
+      // Fall back to defaults
+    }
+
+    return ZenModels.lmStudioAll;
+  }
+
+  List<AiToolCall> _extractChatToolCalls(Map<String, dynamic> data) {
+    final choices = data['choices'] as List?;
+    if (choices == null || choices.isEmpty) return [];
+
+    final message = choices[0] as Map<String, dynamic>?;
+    if (message == null) return [];
+
+    final msg = message['message'] as Map<String, dynamic>?;
+    if (msg == null) return [];
+
+    final toolCallsRaw = msg['tool_calls'] as List?;
+    if (toolCallsRaw == null || toolCallsRaw.isEmpty) return [];
+
+    return toolCallsRaw.map((tc) {
+      final func = tc['function'] as Map<String, dynamic>? ?? {};
+      final argsStr = func['arguments'] as String? ?? '{}';
+      Map<String, dynamic> args;
+      try {
+        args = jsonDecode(argsStr) as Map<String, dynamic>;
+      } catch (_) {
+        args = {};
+      }
+      return AiToolCall(
+        id: tc['id'] as String? ?? '',
+        name: func['name'] as String? ?? '',
+        arguments: args,
+      );
+    }).toList();
+  }
+
+  String _extractChatContent(Map<String, dynamic> data) {
+    final choices = data['choices'] as List?;
+    if (choices == null || choices.isEmpty) return '';
+
+    final first = choices[0] as Map<String, dynamic>?;
+    if (first == null) return '';
+
+    final message = first['message'] as Map<String, dynamic>?;
+    if (message == null) return '';
+
+    return message['content'] as String? ?? '';
+  }
+
+  String _parseLmStudioError(String body) {
+    try {
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final error = json['error'] as Map<String, dynamic>?;
+      if (error != null) {
+        return (error['message'] as String?) ?? body;
+      }
+    } catch (_) {}
+    return body;
+  }
+}
+
+// ============================================================================
 // AcpAiService — delegates to a remote ACP server via acp_dart
 // ============================================================================
 

@@ -24,12 +24,13 @@ When adding a new feature, verify it works through Paseo:
    `AgentMessageChunkSessionUpdate` session updates. This was added so Paseo
    sees command output in the conversation instead of getting empty responses.
 
-2. **Model lists** — `onNewSession()` sends ALL models (Zen + OpenRouter,
-   deduplicated) in the `models` field so Paseo shows them in its model
-   selector dropdown.
+2. **Model lists** — `onNewSession()` sends ALL models (Zen + OpenRouter + LM
+   Studio, deduplicated) in the `models` field so Paseo shows them in its
+   model selector dropdown.
 
-3. **Provider switching** — `/provider <zen|openrouter>` works over ACP stdio
-   the same as in TUI. Test with: `printf '.../prompt.../provider openrouter...'`
+3. **Provider switching** — `/provider <zen|openrouter|lmstudio>` works over
+   ACP stdio the same as in TUI. Test with:
+   `printf '.../prompt.../provider lmstudio...'`
    The response streams back as session updates.
 
 4. **Model auto-switch** — `/model openai/gpt-4o` (an OpenRouter model) should
@@ -73,9 +74,9 @@ lib/
     │   └── app_config.dart
     ├── models/            — Data models
     │   ├── conversation.dart        — Conversation + Message
-    │   └── zen_models.dart          — Zen & OpenRouter model catalog (dual lists)
+    │   └── zen_models.dart          — Zen, OpenRouter & LM Studio model catalog
     ├── services/          — Core services
-    │   ├── ai_service.dart          — AiService (abstract), ZenAiService, OpenRouterAiService, AcpAiService
+    │   ├── ai_service.dart          — AiService (abstract), ZenAiService, OpenRouterAiService, LmStudioAiService, AcpAiService
     │   ├── agent_service.dart       — Agent loop, provider switching, conversation mgmt, ACP lifecycle
     │   ├── skills.dart              — Agent Skills spec loader
     │   ├── session_store.dart       — Session persistence (save/load convos)
@@ -174,10 +175,12 @@ Utopic loads configuration from YAML files (see README for load order). Key fiel
 | `opencode_api_key` | env `OPENCODE_API_KEY` | OpenCode Zen API key |
 | `default_model` | `deepseek-v4-flash-free` | Zen model to use on startup |
 | `zen_endpoint` | `https://opencode.ai/zen` | Zen API endpoint |
-| `provider` | `zen` | Default AI provider (`zen` or `openrouter`) |
+| `provider` | `zen` | Default AI provider (`zen`, `openrouter`, or `lmstudio`) |
 | `openrouter_api_key` | env `OPENROUTER_API_KEY` | OpenRouter API key |
 | `openrouter_endpoint` | `https://openrouter.ai/api/v1` | OpenRouter API endpoint |
 | `default_openrouter_model` | `openai/gpt-4o` | Default model when using OpenRouter |
+| `lm_studio_endpoint` | `http://localhost:1234/v1` | LM Studio API endpoint |
+| `default_lm_studio_model` | `local-model` | Default model when using LM Studio |
 | `max_iterations` | `10` | Max AI + tool-call rounds before stopping (prevents runaway loops) |
 | `system_prompt` | (hardcoded) | Override the default system prompt |
 | `acp.enabled` | `false` | Auto-start ACP server on boot |
@@ -222,15 +225,15 @@ data, Paseo may show a blank response. The fix (already implemented) is to
 stream the command output as `AgentMessageChunkSessionUpdate` and return
 `{inputTokens: 0, outputTokens: 0}`.
 
-### Provider switching (Zen ↔ OpenRouter)
+### Provider switching (Zen ↔ OpenRouter ↔ LM Studio)
 
-`AgentService` supports switching between `ZenAiService` and
-`OpenRouterAiService` at runtime via `/provider <zen|openrouter>` or
-automatically when `/model <id>` selects a model from the other provider.
+`AgentService` supports switching between `ZenAiService`, `OpenRouterAiService`,
+and `LmStudioAiService` at runtime via `/provider <zen|openrouter|lmstudio>`
+or automatically when `/model <id>` selects a model from another provider.
 
 The switching logic:
 1. If the current AI service matches the target provider, do nothing.
-2. Save the old service as a "fallback" (`_zenFallback` / `_openrouterFallback`)
+2. Save the old service as a "fallback" (`_zenFallback` / `_openrouterFallback` / `_lmStudioFallback`)
 3. Restore or create the new provider's service
 4. Fetch models if it's a new service
 

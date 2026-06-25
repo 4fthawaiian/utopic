@@ -3,7 +3,7 @@ import 'package:yaml/yaml.dart';
 import 'package:path/path.dart' as path;
 
 /// Which AI provider to use by default.
-enum AiProvider { zen, openrouter }
+enum AiProvider { zen, openrouter, lmstudio }
 
 class AppConfig {
   final String? opencodeApiKey;
@@ -13,6 +13,10 @@ class AppConfig {
   final String? openrouterApiKey;
   final String openrouterEndpoint;
   final String defaultOpenrouterModel;
+
+  final String lmStudioEndpoint;
+  final String defaultLmStudioModel;
+
   final AiProvider provider;
 
   final AcpConfig acp;
@@ -27,6 +31,8 @@ class AppConfig {
     this.openrouterApiKey,
     this.openrouterEndpoint = 'https://openrouter.ai/api/v1',
     this.defaultOpenrouterModel = 'openai/gpt-4o',
+    this.lmStudioEndpoint = 'http://localhost:1234/v1',
+    this.defaultLmStudioModel = 'local-model',
     this.provider = AiProvider.zen,
     required this.acp,
     this.systemPrompt,
@@ -44,6 +50,10 @@ class AppConfig {
           'https://openrouter.ai/api/v1',
       defaultOpenrouterModel: yaml['default_openrouter_model'] as String? ??
           'openai/gpt-4o',
+      lmStudioEndpoint: yaml['lm_studio_endpoint'] as String? ??
+          'http://localhost:1234/v1',
+      defaultLmStudioModel: yaml['default_lm_studio_model'] as String? ??
+          'local-model',
       provider: _parseProvider(yaml['provider'] as String?),
       systemPrompt: yaml['system_prompt'] as String?,
       acp: AcpConfig.fromYaml(Map<dynamic, dynamic>.from(yaml['acp'] as Map? ?? {})),
@@ -56,6 +66,9 @@ class AppConfig {
     switch (value.toLowerCase()) {
       case 'openrouter':
         return AiProvider.openrouter;
+      case 'lmstudio':
+      case 'lm_studio':
+        return AiProvider.lmstudio;
       default:
         return AiProvider.zen;
     }
@@ -82,6 +95,8 @@ class AppConfig {
     String? openrouterApiKey;
     String? openrouterEndpoint;
     String? defaultOpenrouterModel;
+    String? lmStudioEndpoint;
+    String? defaultLmStudioModel;
     AiProvider? cfgProvider;
     String? systemPrompt;
     AcpConfig? acpCfg;
@@ -101,6 +116,8 @@ class AppConfig {
         openrouterApiKey ??= cfg.openrouterApiKey;
         openrouterEndpoint ??= cfg.openrouterEndpoint;
         defaultOpenrouterModel ??= cfg.defaultOpenrouterModel;
+        lmStudioEndpoint ??= cfg.lmStudioEndpoint;
+        defaultLmStudioModel ??= cfg.defaultLmStudioModel;
         cfgProvider ??= cfg.provider;
         systemPrompt ??= cfg.systemPrompt;
         acpCfg ??= cfg.acp;
@@ -123,6 +140,8 @@ class AppConfig {
       openrouterApiKey: openrouterApiKey,
       openrouterEndpoint: openrouterEndpoint ?? 'https://openrouter.ai/api/v1',
       defaultOpenrouterModel: defaultOpenrouterModel ?? 'openai/gpt-4o',
+      lmStudioEndpoint: lmStudioEndpoint ?? 'http://localhost:1234/v1',
+      defaultLmStudioModel: defaultLmStudioModel ?? 'local-model',
       provider: provider ?? cfgProvider ?? AiProvider.zen,
       systemPrompt: systemPrompt,
       acp: acpCfg ?? AcpConfig.defaultConfig(),
@@ -139,6 +158,8 @@ class AppConfig {
       openrouterApiKey: Platform.environment['OPENROUTER_API_KEY'],
       openrouterEndpoint: 'https://openrouter.ai/api/v1',
       defaultOpenrouterModel: 'openai/gpt-4o',
+      lmStudioEndpoint: 'http://localhost:1234/v1',
+      defaultLmStudioModel: 'local-model',
       provider: provider ?? AiProvider.zen,
       acp: AcpConfig.defaultConfig(),
       promptFile: promptFile,

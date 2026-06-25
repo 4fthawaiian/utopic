@@ -1,3 +1,29 @@
+## 1.3.0
+
+- **🏠 LM Studio provider support** — Utopic can now use local models via
+  [LM Studio](https://lmstudio.ai/)'s OpenAI-compatible API as a third AI
+  provider alongside OpenCode Zen and OpenRouter. Switch at runtime with
+  `/provider <zen|openrouter|lmstudio>` or via the `--lmstudio` CLI flag.
+  (`ai_service.dart`, `agent_service.dart`, `utopic_tui.dart`)
+- **New `LmStudioAiService`** — Full Chat Completions API implementation with
+  tool calling, model discovery from LM Studio's `/v1/models` endpoint, and
+  automatic format conversion. No API key required — connects to
+  `http://localhost:1234/v1` by default. (`ai_service.dart`)
+- **LM Studio model catalog** — `ZenModels` now holds a third model list for
+  LM Studio. Models are fetched live from LM Studio's API and merged with
+  safe defaults. (`zen_models.dart`)
+- **Triple-provider model list** — `/models` now shows all three provider
+  lists. `onNewSession()` sends all models (Zen + OpenRouter + LM Studio,
+  deduplicated) so Paseo's model selector sees everything.
+  (`agent_service.dart`)
+- **Provider fallback chain** — `_lmStudioFallback` joins the fallback
+  system, allowing seamless switching between all three providers without
+  re-fetching models. (`agent_service.dart`)
+- **New config fields** — `lm_studio_endpoint`, `default_lm_studio_model`.
+  (`app_config.dart`, `config.yaml.example`)
+- **`--lmstudio` CLI flag** — Start utopic with LM Studio as the default
+  provider. (`bin/utopic.dart`)
+
 ## 1.2.0
 
 - **✨ OpenRouter provider support** — Utopic can now use OpenRouter as an
