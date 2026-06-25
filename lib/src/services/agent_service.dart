@@ -628,18 +628,23 @@ class AgentService implements AcpAgentDelegate {
           content: '**Available Commands:**\n\n'
               '`/help` - Show this help message\n'
               '`/model <name>` - Switch AI model\n'
+              '`/models` - List ALL available models (Zen + OpenRouter)\n'
               '`/provider` - Show current provider (Zen/OpenRouter)\n'
               '`/provider <zen|openrouter>` - Switch provider\n'
               '`/new` - Start a new conversation\n'
               '`/list` - List all conversations\n'
               '`/switch <id>` - Switch to a conversation\n'
               '`/clear` - Clear current conversation\n'
-              '`/acp` - Toggle ACP server status\n'
-              '`/models` - List ALL available models (Zen + OpenRouter)\n'
+              '`/save` - Save current conversation\n'
+              '`/load <id>` - Load a saved conversation\n'
+              '`/acp` - Toggle ACP server\n'
+              '`/acp-connect <host> <port>` - Connect to remote ACP provider\n'
+              '`/acp-connect cli:<cmd>` - Spawn local CLI as ACP provider\n'
+              '`/acp-disconnect` - Disconnect from ACP provider\n'
               '`/prompt <text>` - Set per-conversation system prompt\n'
-              '`/quit` - Exit the agent\n'
-              '`/phobe` - Toggle phobe mode (remove pride theming)'
-              '`/config` - Show current configuration',
+              '`/config` - Show current configuration\n'
+              '`/phobe` - Toggle phobe mode (remove pride theming)\n'
+              '`/quit` - Exit the agent',
         );
         _activeConv!.addMessage(msg);
         break;
@@ -683,6 +688,12 @@ class AgentService implements AcpAgentDelegate {
             );
             _activeConv!.addMessage(msg);
           }
+        } else {
+          _activeConv!.addMessage(Message(
+            role: 'assistant',
+            content: '⚠️ Usage: `/model <id>` to switch model.\n'
+                'Try `/models` to see available models, or just `/model` without args in TUI for interactive mode.',
+          ));
         }
         break;
 
@@ -845,14 +856,132 @@ class AgentService implements AcpAgentDelegate {
         ));
         break;
 
-      case '/phobe':
-        // Phobe mode is handled by the TUI, but if the message reaches
-        // the agent (e.g. programmatic input), acknowledge it.
+      case '/save':
+        await saveCurrentSession();
         _activeConv!.addMessage(Message(
           role: 'assistant',
-          content: '⚠️ Phobe mode can only be toggled from inside the TUI '
-              'with the `/phobe` command or at startup with `--phobe`.'
-              'The TUI is not available in this mode.',
+          content: '✅ Saved (${_activeConv!.id})',
+        ));
+        break;
+
+      case '/load':
+        if (parts.length > 1) {
+          final conv = await loadSession(parts[1]);
+          if (conv != null) {
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: '✅ Loaded: ${conv.title}',
+            ));
+          } else {
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: '⚠️ Session not found: ${parts[1]}',
+            ));
+          }
+        } else {
+          final saved = listSavedSessions();
+          if (saved.isEmpty) {
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: 'No saved sessions. Use `/save` first.',
+            ));
+          } else {
+            final buffer = StringBuffer('**Saved Sessions:**\n\n');
+            for (final s in saved) {
+              buffer.writeln('- `${s['id']}` — ${s['title']} (${s['messageCount']} msgs)');
+            }
+            buffer.writeln('\nUse `/load <id>` to load one.');
+            _activeConv!.addMessage(Message(role: 'assistant', content: buffer.toString()));
+          }
+        }
+        break;
+
+      case '/acp-connect':
+      case '/acp-connection':
+        if (parts.length < 2) {
+          _activeConv!.addMessage(Message(
+            role: 'assistant',
+            content: '⚠️ Usage: `/acp-connect <host> <port>` or `/acp-connect cli:<command>`',
+          ));
+        } else if (parts[1].startsWith('cli:')) {
+          final cmd = parts[1].substring(4);
+          final args = parts.length > 2 ? parts.sublist(2) : <String>[];
+          _activeConv!.addMessage(Message(
+            role: 'assistant',
+            content: '⏳ Connecting to CLI: `$cmd`...',
+          ));
+          try {
+            final info = await connectToAcpCli(cmd, args: args);
+            final name = info['server_name'] ?? 'acp';
+            final model = info['agent_info']?['model'] ?? 'unknown';
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: '✅ ACP: `$name` (`$model`) via `$cmd`',
+            ));
+          } catch (e) {
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: '⚠️ ACP CLI error: $e',
+            ));
+          }
+        } else if (parts.length >= 3) {
+          final host = parts[1];
+          final port = int.tryParse(parts[2]);
+          if (port == null) {
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: '⚠️ Invalid port: ${parts[2]}',
+            ));
+          } else {
+            _activeConv!.addMessage(Message(
+              role: 'assistant',
+              content: '⏳ Connecting to `$host:$port`...',
+            ));
+            try {
+              final info = await connectToAcp(host, port);
+              final name = info['server_name'] ?? 'acp';
+              final model = info['agent_info']?['model'] ?? 'unknown';
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '✅ ACP: `$name` (`$model`) @ `$host:$port`',
+              ));
+            } catch (e) {
+              _activeConv!.addMessage(Message(
+                role: 'assistant',
+                content: '⚠️ ACP connect error: $e',
+              ));
+            }
+          }
+        } else {
+          _activeConv!.addMessage(Message(
+            role: 'assistant',
+            content: '⚠️ Usage: `/acp-connect <host> <port>` or `/acp-connect cli:<command>`',
+          ));
+        }
+        break;
+
+      case '/acp-disconnect':
+        if (isUsingAcp) {
+          await disconnectFromAcp();
+          _activeConv!.addMessage(Message(
+            role: 'assistant',
+            content: '✅ ACP disconnected. Switched back to `${ai.currentModel}`.',
+          ));
+        } else {
+          _activeConv!.addMessage(Message(
+            role: 'assistant',
+            content: '⚠️ Not connected to an ACP provider.',
+          ));
+        }
+        break;
+
+      case '/phobe':
+        phobeMode = !phobeMode;
+        _activeConv!.addMessage(Message(
+          role: 'assistant',
+          content: phobeMode
+              ? '✅ Phobe mode: colors off. Restart with `--phobe` to skip the queer welcome.'
+              : '🌈 Pride mode: full queer energy!',
         ));
         break;
 

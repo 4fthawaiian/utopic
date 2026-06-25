@@ -8,6 +8,25 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 
 <img src="Utopic.png" alt="Utopic TUI screenshot" width="700">
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [One-shot mode](#one-shot-mode)
+- [Keys](#keys)
+- [Commands](#commands)
+- [Skills](#skills)
+- [Sessions](#sessions)
+- [System prompt](#system-prompt)
+- [Models](#models)
+- [ACP (Agent Client Protocol)](#acp-agent-client-protocol)
+  - [ACP Server](#acp-server-utopic-as-backend-for-other-tools)
+  - [ACP Client](#acp-client-remote-server-or-local-cli-as-model-provider)
+- [Configuration](#configuration)
+- [CLI](#cli)
+- [Project structure](#project-structure)
+- [Build](#build)
+
 ## Features
 
 - 🖥️ **Terminal UI** — Non-modal, just type and send. Rainbow pride theming (toggle with `/phobe` or `--phobe`)
@@ -16,6 +35,7 @@ the **Agent Client Protocol (ACP)**, and [**Paseo**](https://paseo.sh).
 - 🧠 **Skills** — Agent Skills spec (agentskills.io) — drop `skills/<name>/SKILL.md` in your project or `~/.config/utopic/skills/`
 - 📄 **Flexible prompts** — YAML config, `AGENTS.md` (project + global), `--prompt` flag, per-conversation `/prompt`
 - 🔄 **Agent loop** — Multi-iteration tool calling (bash, read, write, edit), configurable via `max_iterations` in `config.yaml` (default 10), cancel anytime with `Ctrl+C`
+- 📊 **Context usage bar** — Shows token consumption in real-time (`45% (92K/200K)`) in the status bar, with live updates streamed over ACP to Paseo
 - 📂 **Conversations** — Multiple conversations, switch between them
 - ⚡ **One-shot mode** — `utopic "prompt"` prints the response and exits
 - 🔌 **ACP Server + Client** — Agent Client Protocol server for external tools, plus client mode to use remote ACP servers as model providers
@@ -49,6 +69,7 @@ dart run -- "what's in this directory?"
 | Key | Action |
 |---|---|
 | `Enter` | Send message |
+| `Alt+Enter` | Insert newline |
 | `↑` / `↓` | Scroll line up / down |
 | `PgUp` / `PgDn` | Scroll page up / down |
 | `Home` / `End` | Scroll to top / bottom |
@@ -222,7 +243,9 @@ communicates through pipes.
 dart run -- --acp-server
 ```
 
-ACP methods supported: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/list`, `session/delete`, `session/load`, `session/set_config_option`, `session/set_model`, `session/set_mode`, `fs/read_text_file`, `fs/write_text_file`, `fs/list`, `terminal/create`, `terminal/kill`, `terminal/output`, `terminal/release`, `terminal/wait_for_exit`.
+ACP methods supported: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/list`, `session/set_config_option`, `session/set_model`, `session/set_mode`.
+
+> **Note:** Filesystem (`fs/*`) and terminal methods are not yet implemented in the ACP server. These are planned for a future release.
 
 ### ACP Client (remote server or local CLI as model provider)
 
@@ -263,7 +286,7 @@ Disconnect to fall back to the local Zen API provider:
 ACP disconnected  ·  deepseek-v4-flash-free
 ```
 
-Auto-connect on startup via config:
+Auto-connect on startup via config (planned, not yet implemented):
 
 ```yaml
 acp:
@@ -272,14 +295,24 @@ acp:
       port: 8080
 ```
 
+> ⚠️ Auto-connect on startup is a planned feature. For now, use `/acp-connect`
+> interactively to connect to remote ACP providers.
+
 ## Configuration
 
-Config is loaded from (in priority order):
+Config is loaded with the following sources (later sources fill in missing values from earlier ones — not a strict override chain):
 
-1. `$UTOPIC_CONFIG` environment variable
-2. `./config.yaml`
-3. `~/.config/utopic/config.yaml`
-4. `~/.config.yaml`
+1. `--config <path>` CLI flag (highest precedence — points to a specific file)
+2. `$UTOPIC_CONFIG` environment variable
+3. `./config.yaml` (project-local)
+4. `~/.config/utopic/config.yaml` (user-level)
+5. `~/.config.yaml` (legacy fallback)
+
+> **Note:** Unlike a traditional priority chain, later configs only **fill in** values
+> not set by earlier configs. A value set in `./config.yaml` cannot be overridden
+> by `~/.config/utopic/config.yaml` — the first file with that key wins.
+> Environment variables (`OPENCODE_API_KEY`, `OPENROUTER_API_KEY`) serve as
+> final fallbacks if no config file provides the key.
 
 **`provider`** — which AI provider to use by default: `zen` or `openrouter`.
 Can be overridden at runtime with `/provider` or the `--openrouter` CLI flag.
@@ -295,7 +328,7 @@ Can be overridden at runtime with `/provider` or the `--openrouter` CLI flag.
 
 **OpenRouter endpoint** — set via `openrouter_endpoint` (default: `https://openrouter.ai/api/v1`).
 
-**ACP server auto-start** — set `acp.enabled: true` to start the server on boot.
+**ACP server auto-start** — set `acp.enabled: true` to start the server on boot (planned, not yet implemented — use `--acp-server` or `--acp-stdio` for now).
 
 **API key (Zen)** — provide via `OPENCODE_API_KEY` env var or `opencode_api_key` in YAML.
 
