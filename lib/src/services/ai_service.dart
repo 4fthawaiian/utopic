@@ -78,6 +78,12 @@ abstract class AiService {
 
   /// Fetch available models from the provider.
   Future<List<ZenModel>> fetchModels();
+
+  /// Cancel any in-flight completion request.
+  /// The next call to [complete] should work normally after this.
+  void cancel() {
+    // Default no-op — subclasses should override to abort HTTP requests.
+  }
 }
 
 // ============================================================================
@@ -85,11 +91,19 @@ abstract class AiService {
 // ============================================================================
 
 class ZenAiService extends AiService {
-  final http.Client _client;
+  http.Client _client;
   String? _currentModel;
 
   ZenAiService({required super.config, http.Client? client})
       : _client = client ?? http.Client();
+
+  @override
+  void cancel() {
+    // Close the HTTP client to abort any in-flight request,
+    // then create a fresh one for future use.
+    _client.close();
+    _client = http.Client();
+  }
 
   @override
   String get currentModel => _currentModel ?? config.defaultModel;
@@ -264,11 +278,17 @@ class ZenAiService extends AiService {
 // ============================================================================
 
 class OpenRouterAiService extends AiService {
-  final http.Client _client;
+  http.Client _client;
   String? _currentModel;
 
   OpenRouterAiService({required super.config, http.Client? client})
       : _client = client ?? http.Client();
+
+  @override
+  void cancel() {
+    _client.close();
+    _client = http.Client();
+  }
 
   @override
   String get currentModel =>
@@ -487,11 +507,17 @@ class OpenRouterAiService extends AiService {
 // ============================================================================
 
 class LmStudioAiService extends AiService {
-  final http.Client _client;
+  http.Client _client;
   String? _currentModel;
 
   LmStudioAiService({required super.config, http.Client? client})
       : _client = client ?? http.Client();
+
+  @override
+  void cancel() {
+    _client.close();
+    _client = http.Client();
+  }
 
   @override
   String get currentModel =>
@@ -701,6 +727,13 @@ class AcpAiService extends AiService {
   String? _currentModelId;
 
   AcpAiService({required super.config, required this._conn});
+
+  @override
+  void cancel() {
+    // Disconnect the ACP connection to abort an in-flight request.
+    // A new connection will need to be established for the next call.
+    _conn.disconnect();
+  }
 
   /// Available models from the remote ACP server.
   List<Map<String, dynamic>> get availableModels =>

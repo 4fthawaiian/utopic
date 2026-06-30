@@ -36,14 +36,27 @@ When adding a new feature, verify it works through Paseo:
 4. **Model auto-switch** — `/model openai/gpt-4o` (an OpenRouter model) should
    auto-switch the provider to OpenRouter and report it in the response.
 
-3. **Tool progress** — Tool calls are streamed as `ToolCallSessionUpdate` /
+5. **Tool progress** — Tool calls are streamed as `ToolCallSessionUpdate` /
    `ToolCallUpdateSessionUpdate` so Paseo shows real-time progress. Text
    reasoning before tool calls is sent as `AgentMessageChunkSessionUpdate`.
 
-4. **Context tracking** — Usage updates (`UsageUpdate`) are sent after each
+6. **Context tracking** — Usage updates (`UsageUpdate`) are sent after each
    round so Paseo shows the context window usage bar.
 
-5. **No TUI assumption** — The `AgentService` core (`agent_service.dart`) must
+5. **Session load/resume** — `session/load` and `session/resume` are
+   implemented in `acp_agent.dart` and `agent_service.dart`. Load streams
+   full conversation history as `session/update` notifications (message
+   chunks, tool calls, usage updates). Resume restores session state without
+   replaying history. Both use `_acpSessionToConvId` to map ACP session IDs
+   to internal conversation IDs.
+
+6. **Cross-restart session persistence** — Conversations are auto-saved to
+   `~/.config/utopic/sessions/<id>.json` after every exchange (including
+   slash commands). On startup, `initialize()` rebuilds the
+   `_acpSessionToConvId` mapping from saved sessions, so `session/resume`
+   works even after a full process restart.
+
+7. **No TUI assumption** — The `AgentService` core (`agent_service.dart`) must
    never assume a TUI is attached. All UI updates go through streams
    (`conversationsStream`, `activeConversationStream`) that the TUI subscribes
    to. ACP mode works without any of those streams being consumed.
@@ -113,8 +126,20 @@ both client and server ACP communication.
 - **`AcpServer`** (in `acp_server.dart`) — thin transport wrapper (TCP/stdio)
   over `AgentSideConnection`
 - Supports standard ACP methods: `session/new`, `session/prompt`,
-  `session/cancel`, `session/list`, `fs/read_text_file`, `fs/write_text_file`,
-  `terminal/create`, etc.
+  `session/cancel`, `session/list`, `session/load`, `session/resume`,
+  `session/set_model`, `session/set_mode`, `session/set_config_option`,
+  `fs/read_text_file`, `fs/write_text_file`, `terminal/create`, etc.
+- **Session load** streams full conversation history as `session/update`
+  notifications (message chunks, tool calls, tool results, usage updates)
+  so Paseo can populate the chat view.
+- **Session resume** restores session state from disk or in-memory without
+  replaying history — uses `_acpSessionToConvId` mapping to find the
+  conversation by session ID.
+- **`_restart` extension notification** — Paseo can send this to reset all
+  agent state (clear conversations, cancel in-flight work, reinitialize)
+  without killing the subprocess. Handled in `extNotification()`.
+- **Re-initialization** — a second `initialize` call triggers `onRestart()`
+  (same as `_restart`), so reconnecting from Paseo starts fresh.
 - Headless modes: `--acp-server` (TCP), `--acp-stdio` (stdin/stdout)
 
 ## Agent Loop (`agent_service.dart`)
@@ -128,11 +153,33 @@ Cancellation via the `_cancelRequested` flag:
 - Checked before each `ai.complete()` call
 - Checked after each `ai.complete()` returns
 - Checked before each tool execution
+- **HTTP abort** — `cancel()` also calls `ai.cancel()` which closes the
+  underlying HTTP client, immediately aborting any in-flight request. The
+  caught exception is treated as clean cancellation.
+- Cancellation messages are streamed as `AgentMessageChunkSessionUpdate`
+  so Paseo sees "🛑 Cancelled." instead of an empty response.
 
 ## Session Persistence
 
 Conversations auto-save to `~/.config/utopic/sessions/<id>.json` after every
-exchange. Save/load via `/save`, `/load <id>`, or `--load <id>` on CLI.
+exchange (including slash commands like `/model`, `/provider`).
+
+### ACP session/load and session/resume
+
+- **`session/load`** — restores a conversation from disk and streams the
+  full history back as `session/update` notifications (message chunks, tool
+  calls, usage updates) so Paseo can populate its chat view.
+- **`session/resume`** — restores session state without replaying history.
+  Uses `_acpSessionToConvId` to find the conversation by ACP session ID
+  (checking in-memory first, falling back to disk).
+- **Cross-restart** — on startup, `initialize()` rebuilds the
+  `_acpSessionToConvId` mapping from saved sessions, so `session/resume`
+  works even after a full process restart.
+- **ACP session ID as conversation ID** — conversations created via ACP use
+  the ACP session ID (e.g. `session_123...`) directly as their conversation
+  ID, ensuring the file on disk matches what Paseo sends in load/resume.
+
+Save/load via `/save`, `/load <id>`, or `--load <id>` on CLI.
 
 ## Building & Testing
 
@@ -224,6 +271,33 @@ commands. If `onPrompt()` handles a `/command` without returning actual result
 data, Paseo may show a blank response. The fix (already implemented) is to
 stream the command output as `AgentMessageChunkSessionUpdate` and return
 `{inputTokens: 0, outputTokens: 0}`.
+
+### ACP session/resume requires ID mapping
+
+`session/resume` relies on `_acpSessionToConvId` to find conversations. This
+mapping is populated in three places:
+1. `onNewSession()` — registers the ACP session ID → conversation ID mapping
+2. `initialize()` — rebuilds from saved sessions on disk (critical for
+   cross-restart resume)
+3. `onResumeSession()` / `onLoadSession()` — re-registers on each access
+
+**Gotcha**: if you add a new code path that creates conversations, make sure
+to register the mapping. Sessions created outside ACP (e.g. via `/new` in the
+TUI) use `conv_xxx` IDs that won't match ACP session IDs — `onPrompt()` falls
+back to finding them by `sessionId` directly, but `session/resume` won't work
+unless the mapping exists.
+
+### HTTP client cancellation pattern
+
+`AiService.cancel()` closes the underlying HTTP client to abort in-flight
+requests, then creates a fresh client. This is implemented in all providers:
+`ZenAiService`, `OpenRouterAiService`, `LmStudioAiService`, and
+`AcpAiService`.
+
+The agent loop wraps `ai.complete()` in try/catch — if cancellation closes
+the client mid-request, the caught exception is treated as clean cancellation
+rather than an error. This means `Ctrl+C` in Paseo stops the agent
+**immediately** instead of waiting for the HTTP request to finish.
 
 ### Provider switching (Zen ↔ OpenRouter ↔ LM Studio)
 

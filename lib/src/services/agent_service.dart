@@ -27,9 +27,11 @@ class AgentService implements AcpAgentDelegate {
   bool _cancelRequested = false;
 
   /// Request cancellation of the current agent run.
-  /// The agent loop will stop at the next safe point.
+  /// The agent loop will stop at the next safe point and abort any
+  /// in-flight AI HTTP request.
   void cancel() {
     _cancelRequested = true;
+    ai.cancel();
   }
 
   // Events for UI updates
@@ -56,6 +58,10 @@ class AgentService implements AcpAgentDelegate {
 
   /// Track active ACP sessions so we can push model list updates to Paseo.
   final Map<String, AgentSideConnection> _acpSessions = {};
+
+  /// Maps ACP session IDs (e.g. `session_123`) to internal conversation IDs
+  /// (e.g. `conv_456_789`). Used for session/load and session/resume.
+  final Map<String, String> _acpSessionToConvId = {};
 
   AgentService({required this.config, AiService? aiService})
       : ai = aiService ?? _createDefaultAi(config);
@@ -212,6 +218,11 @@ class AgentService implements AcpAgentDelegate {
       final conv = _sessionStore.load(s['id'] as String);
       if (conv != null) {
         _conversations.add(conv);
+        // Repopulate the ACP session → conversation ID mapping so that
+        // session/resume and session/load work across restarts.
+        // ACP sessions use their session ID (e.g. "session_123...") as the
+        // conversation ID, so the mapping is identity-based.
+        _acpSessionToConvId[conv.id] = conv.id;
       }
     }
 
@@ -358,6 +369,9 @@ class AgentService implements AcpAgentDelegate {
             role: 'assistant',
             content: '🛑 Cancelled.',
           ));
+          await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+            content: TextContentBlock(text: '🛑 Cancelled.'),
+          ));
           _notifyUpdates();
           return null;
         }
@@ -395,10 +409,32 @@ class AgentService implements AcpAgentDelegate {
           }
         }
 
-        final result = await ai.complete(
-          conversation: conv,
-          tools: _toolDefs,
-        );
+        // Wrap the AI call so that if cancellation closes the HTTP
+        // client (via ai.cancel()), we catch the resulting error and
+        // treat it as a clean cancellation rather than an ugly error.
+        AiResult result;
+        try {
+          result = await ai.complete(
+            conversation: conv,
+            tools: _toolDefs,
+          );
+        } catch (_) {
+          // If cancellation was requested during the HTTP request,
+          // the closed client will throw — handle cleanly.
+          if (_cancelRequested) {
+            _cancelRequested = false;
+            conv.addMessage(Message(
+              role: 'assistant',
+              content: '🛑 Cancelled.',
+            ));
+            await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+              content: TextContentBlock(text: '🛑 Cancelled.'),
+            ));
+            _notifyUpdates();
+            return null;
+          }
+          rethrow;
+        }
 
         // Store the actual context size from the API response.
         // result.inputTokens reflects the full conversation sent to the model,
@@ -414,6 +450,9 @@ class AgentService implements AcpAgentDelegate {
           conv.addMessage(Message(
             role: 'assistant',
             content: '🛑 Cancelled.',
+          ));
+          await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+            content: TextContentBlock(text: '🛑 Cancelled.'),
           ));
           _notifyUpdates();
           return null;
@@ -469,6 +508,9 @@ class AgentService implements AcpAgentDelegate {
               conv.addMessage(Message(
                 role: 'assistant',
                 content: '🛑 Cancelled.',
+              ));
+              await sendAcpUpdate(AgentMessageChunkSessionUpdate(
+                content: TextContentBlock(text: '🛑 Cancelled.'),
               ));
               _notifyUpdates();
               return null;
@@ -1278,6 +1320,23 @@ class AgentService implements AcpAgentDelegate {
   }
 
   @override
+  Future<Map<String, dynamic>> onRestart() async {
+    // Cancel any in-flight agent work (AI HTTP requests, tool calls)
+    cancel();
+
+    // Wipe all conversations — we're starting clean
+    _conversations.clear();
+    _activeConv = null;
+    _acpSessions.clear();
+    _acpSessionToConvId.clear();
+
+    // Re-initialize with a fresh welcome state
+    await initialize();
+
+    return onInitialize();
+  }
+
+  @override
   Future<Map<String, dynamic>> onNewSession(String cwd) async {
     final sessionId = 'session_${DateTime.now().millisecondsSinceEpoch}';
 
@@ -1292,6 +1351,33 @@ class AgentService implements AcpAgentDelegate {
         // Fine, use what we have
       }
     }
+
+    // Create a conversation using the ACP session ID directly as its ID.
+    // This ensures the conversation file on disk matches the ID that Paseo
+    // uses in session/load and session/resume requests — critical for
+    // resume to work across restarts.
+    final conv = Conversation(
+      id: sessionId,
+      title: 'ACP Session',
+      contextLimit: ZenModels.contextLimitFor(ai.currentModel),
+    );
+    conv.addMessage(Message(
+      role: 'system',
+      content: buildSystemPrompt(),
+    ));
+    _conversations.add(conv);
+    _activeConv = conv;
+    _notifyUpdates();
+    _activeConversationController.add(conv);
+
+    // Register the mapping (identity mapping — sessionId == conv.id)
+    _acpSessionToConvId[sessionId] = conv.id;
+
+    // Persist immediately so even an empty session appears in session/list
+    // and can be resumed after a restart.
+    try {
+      _sessionStore.save(conv);
+    } catch (_) {}
 
     return {
       'id': sessionId,
@@ -1423,6 +1509,207 @@ class AgentService implements AcpAgentDelegate {
   }
 
   @override
+  Future<Map<String, dynamic>?> onLoadSession(
+    String sessionId, {
+    AgentSideConnection? connection,
+  }) async {
+    // Look up the conversation by ACP session ID first, then by conv ID
+    final convId = _acpSessionToConvId[sessionId] ?? sessionId;
+
+    // Check in-memory conversations first (fast path — same process)
+    Conversation? conv;
+    try {
+      conv = _conversations.firstWhere((c) => c.id == convId);
+    } catch (_) {}
+
+    // Fall back to disk
+    if (conv == null) {
+      conv = _sessionStore.load(convId);
+      if (conv == null) return null;
+    }
+
+    final c = conv;
+
+    // Ensure context limit matches current model
+    c.contextLimit = ZenModels.contextLimitFor(ai.currentModel);
+    if (c.contextTokens == 0) {
+      c.contextTokens = c.estimateContextTokens();
+    }
+
+    // Replace or add to conversations list
+    final idx = _conversations.indexWhere((c2) => c2.id == c.id);
+    if (idx >= 0) {
+      _conversations[idx] = c;
+    } else {
+      _conversations.add(c);
+    }
+    _activeConv = c;
+    _notifyUpdates();
+    _activeConversationController.add(c);
+
+    // Register the mapping so onPrompt can find it
+    _acpSessionToConvId[sessionId] = c.id;
+
+    // Stream the conversation history back to the client (Paseo) via
+    // session/update notifications so it can populate the chat view.
+    // This is required by the ACP spec for session/load.
+    if (connection != null) {
+      for (final msg in c.messages) {
+        if (msg.role == 'system') continue; // Skip system messages
+        if (msg.role == 'tool') {
+          // Stream tool results as tool call updates
+          await connection.sessionUpdate(SessionNotification(
+            sessionId: sessionId,
+            update: ToolCallUpdateSessionUpdate(
+              toolCallId: msg.toolCallId ?? 'replay_${msg.id}',
+              title: 'tool',
+              status: ToolCallStatus.completed,
+              rawOutput: {
+                'result': msg.content.length > 500
+                    ? '${msg.content.substring(0, 500)}...'
+                    : msg.content,
+              },
+            ),
+          ));
+        } else if (msg.toolCalls != null && msg.toolCalls!.isNotEmpty) {
+          // Stream the AI's commentary text first
+          if (msg.content.isNotEmpty) {
+            await connection.sessionUpdate(SessionNotification(
+              sessionId: sessionId,
+              update: AgentMessageChunkSessionUpdate(
+                content: TextContentBlock(text: msg.content),
+              ),
+            ));
+          }
+          // Then stream each tool call as in-progress updates
+          for (final tc in msg.toolCalls!) {
+            await connection.sessionUpdate(SessionNotification(
+              sessionId: sessionId,
+              update: ToolCallSessionUpdate(
+                toolCallId: tc['id'] as String? ?? 'replay_${msg.id}',
+                title: tc['name'] as String? ?? 'tool',
+                status: ToolCallStatus.inProgress,
+                rawInput: tc['arguments'] is String
+                    ? jsonDecode(tc['arguments'] as String)
+                    : tc['arguments'] as Map<String, dynamic>?,
+                kind: _toolKindFor(tc['name'] as String? ?? ''),
+              ),
+            ));
+            // Mark each as completed (we don't have the actual results linked)
+            await connection.sessionUpdate(SessionNotification(
+              sessionId: sessionId,
+              update: ToolCallUpdateSessionUpdate(
+                toolCallId: tc['id'] as String? ?? 'replay_${msg.id}',
+                title: tc['name'] as String? ?? 'tool',
+                status: ToolCallStatus.completed,
+              ),
+            ));
+          }
+        } else if (msg.role == 'assistant') {
+          // Plain assistant text message
+          await connection.sessionUpdate(SessionNotification(
+            sessionId: sessionId,
+            update: AgentMessageChunkSessionUpdate(
+              content: TextContentBlock(text: msg.content),
+            ),
+          ));
+        } else if (msg.role == 'user') {
+          // User messages don't get streamed back as session updates
+          // in the current ACP protocol — they're implicit in the history.
+          // But we send them as thought updates so the client can reconstruct
+          // the full conversation flow.
+          await connection.sessionUpdate(SessionNotification(
+            sessionId: sessionId,
+            update: AgentThoughtChunkSessionUpdate(
+              content: TextContentBlock(text: '👤 **${msg.content.substring(0, msg.content.length.clamp(0, 200))}**'),
+            ),
+          ));
+        }
+      }
+
+      // Send a final usage update so Paseo shows the context bar
+      await connection.sessionUpdate(SessionNotification(
+        sessionId: sessionId,
+        update: UsageUpdate(
+          size: c.contextLimit,
+          used: c.contextTokens,
+          cost: Cost(
+            amount: c.contextTokens * 0.000001,
+            currency: 'USD',
+          ),
+        ),
+      ));
+    }
+
+    return {
+      'id': sessionId,
+      'model': ai.currentModel,
+      'models': _buildModelList(),
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>?> onResumeSession(
+    String sessionId, {
+    AgentSideConnection? connection,
+  }) async {
+    // Same as onLoadSession but without streaming history.
+    //
+    // Since conversations created via ACP use the ACP session ID as their
+    // conversation ID (see onNewSession), the identity fallback at the end
+    // of the lookup chain handles both in-memory and on-disk cases.
+    final convId = _acpSessionToConvId[sessionId] ?? sessionId;
+
+    // Check in-memory conversations first (fast path — same process)
+    try {
+      final conv = _conversations.firstWhere((c) => c.id == convId);
+      _activeConv = conv;
+      _notifyUpdates();
+      _activeConversationController.add(conv);
+
+      // Re-register the mapping so subsequent prompts find this conv
+      _acpSessionToConvId[sessionId] = conv.id;
+
+      return Future.value({
+        'id': sessionId,
+        'model': ai.currentModel,
+        'models': _buildModelList(),
+      });
+    } catch (_) {}
+
+    // Fall back to disk — load the conversation and set it as active
+    // so the next prompt can find it in-memory.
+    final loaded = _sessionStore.load(convId);
+    if (loaded == null) return null;
+
+    // Ensure context limit matches current model
+    loaded.contextLimit = ZenModels.contextLimitFor(ai.currentModel);
+    if (loaded.contextTokens == 0) {
+      loaded.contextTokens = loaded.estimateContextTokens();
+    }
+
+    // Add or replace in conversations list
+    final idx = _conversations.indexWhere((c) => c.id == loaded.id);
+    if (idx >= 0) {
+      _conversations[idx] = loaded;
+    } else {
+      _conversations.add(loaded);
+    }
+    _activeConv = loaded;
+    _notifyUpdates();
+    _activeConversationController.add(loaded);
+
+    // Map the ACP session ID so subsequent prompts find it
+    _acpSessionToConvId[sessionId] = loaded.id;
+
+    return Future.value({
+      'id': sessionId,
+      'model': ai.currentModel,
+      'models': _buildModelList(),
+    });
+  }
+
+  @override
   Future<Map<String, dynamic>> onPrompt({
     required String sessionId,
     required String prompt,
@@ -1431,18 +1718,34 @@ class AgentService implements AcpAgentDelegate {
     // Track this ACP session so we can push model list updates later
     _acpSessions[sessionId] = connection;
 
-    // Find or create conversation
+    // Find conversation by ACP session ID or conversation ID
     Conversation? conv;
-    try {
-      conv = _conversations.firstWhere((c) => c.id == sessionId);
-    } catch (_) {}
+    // First, check the ACP session → conversation ID mapping
+    final mappedId = _acpSessionToConvId[sessionId];
+    if (mappedId != null) {
+      try {
+        conv = _conversations.firstWhere((c) => c.id == mappedId);
+      } catch (_) {}
+    }
+    // Fall back to matching by conversation ID directly
+    if (conv == null) {
+      try {
+        conv = _conversations.firstWhere((c) => c.id == sessionId);
+      } catch (_) {}
+    }
+    // Last resort: use the most recent conversation
     if (conv == null) {
       if (_conversations.isNotEmpty) {
         conv = _conversations.last;
       } else {
         conv = Conversation(title: 'ACP Session');
+        _conversations.add(conv);
       }
     }
+
+    // Sync _activeConv to this conversation so slash commands (which use
+    // _activeConv internally) operate on the right conversation.
+    _activeConv = conv;
 
     // Ensure system prompt for new conversations
     if (conv.messageCount == 0) {
@@ -1469,6 +1772,11 @@ class AgentService implements AcpAgentDelegate {
           ),
         ));
       }
+      // Save after slash command too, so /model, /provider etc. changes
+      // persist alongside the conversation state.
+      try {
+        _sessionStore.save(conv);
+      } catch (_) {}
       return {
         'inputTokens': 0,
         'outputTokens': 0,
@@ -1487,6 +1795,12 @@ class AgentService implements AcpAgentDelegate {
     if (!_conversations.contains(conv)) {
       _conversations.add(conv);
     }
+
+    // Save the conversation to disk after every exchange so it can be
+    // resumed later, even if the process restarts.
+    try {
+      _sessionStore.save(conv);
+    } catch (_) {}
 
     if (result != null) {
       if (result.content.isEmpty && result.toolCalls.isEmpty) {
@@ -1508,6 +1822,9 @@ class AgentService implements AcpAgentDelegate {
   @override
   void onCancel(String sessionId) {
     _cancelRequested = true;
+    // Abort any in-flight AI HTTP request so we stop waiting immediately
+    // instead of waiting for the request to complete.
+    ai.cancel();
   }
 
   @override

@@ -173,8 +173,9 @@ class _ServerConnection {
       final params = msg['params'];
       if (params is! Map<String, dynamic>) return msg;
 
-      // session/new requires mcpServers but some clients omit it
-      if (method == 'session/new' && !params.containsKey('mcpServers')) {
+      // session/new and session/load require mcpServers but some clients omit it
+      if ((method == 'session/new' || method == 'session/load') &&
+          !params.containsKey('mcpServers')) {
         params['mcpServers'] = <dynamic>[];
       }
 

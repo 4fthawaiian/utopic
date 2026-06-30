@@ -119,6 +119,11 @@ Pre-installed skills:
 Conversations are **auto-saved** to `~/.config/utopic/sessions/<id>.json` after
 every exchange. On startup, utopic resumes your most recent session.
 
+**Sessions survive process restarts** — when used via ACP stdio (Paseo),
+`session/load` streams full conversation history back to the client, and
+`session/resume` restores session state without replaying history. This
+works even after utopic is killed and restarted.
+
 **Commands:**
 
 | Command | Action |
