@@ -1739,12 +1739,6 @@ class AgentService implements AcpAgentDelegate {
     required String prompt,
     required AgentSideConnection connection,
   }) async {
-    // Reset cancellation flag at the start of a new ACP prompt, matching
-    // what sendMessage() does for the TUI path. Without this, any previous
-    // session/cancel or cancel() call from onRestart() would leave the flag
-    // set to true, silently killing the next prompt.
-    _cancelRequested = false;
-
     // Track this ACP session so we can push model list updates later
     _acpSessions[sessionId] = connection;
 
