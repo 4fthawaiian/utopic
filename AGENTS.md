@@ -48,7 +48,8 @@ When adding a new feature, verify it works through Paseo:
    full conversation history as `session/update` notifications (message
    chunks, tool calls, usage updates). Resume restores session state without
    replaying history. Both use `_acpSessionToConvId` to map ACP session IDs
-   to internal conversation IDs.
+   to internal conversation IDs. **Both send a `UsageUpdate`** so Paseo
+   shows the context bar immediately on load/resume.
 
 6. **Cross-restart session persistence** — Conversations are auto-saved to
    `~/.config/utopic/sessions/<id>.json` after every exchange (including

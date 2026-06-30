@@ -1660,6 +1660,24 @@ class AgentService implements AcpAgentDelegate {
     // of the lookup chain handles both in-memory and on-disk cases.
     final convId = _acpSessionToConvId[sessionId] ?? sessionId;
 
+    /// Send a UsageUpdate for the given conversation via the ACP connection.
+    Future<void> sendUsageForConv(Conversation c) async {
+      if (connection == null) return;
+      try {
+        await connection.sessionUpdate(SessionNotification(
+          sessionId: sessionId,
+          update: UsageUpdate(
+            size: c.contextLimit,
+            used: c.contextTokens,
+            cost: Cost(
+              amount: c.contextTokens * 0.000001,
+              currency: 'USD',
+            ),
+          ),
+        ));
+      } catch (_) {}
+    }
+
     // Check in-memory conversations first (fast path — same process)
     try {
       final conv = _conversations.firstWhere((c) => c.id == convId);
@@ -1669,6 +1687,9 @@ class AgentService implements AcpAgentDelegate {
 
       // Re-register the mapping so subsequent prompts find this conv
       _acpSessionToConvId[sessionId] = conv.id;
+
+      // Send usage update so Paseo immediately shows the context bar
+      await sendUsageForConv(conv);
 
       return Future.value({
         'id': sessionId,
@@ -1701,6 +1722,9 @@ class AgentService implements AcpAgentDelegate {
 
     // Map the ACP session ID so subsequent prompts find it
     _acpSessionToConvId[sessionId] = loaded.id;
+
+    // Send usage update so Paseo immediately shows the context bar
+    await sendUsageForConv(loaded);
 
     return Future.value({
       'id': sessionId,
